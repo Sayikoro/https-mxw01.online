@@ -1,0 +1,66 @@
+# MXW01 Web Terminal — печать этикеток на термопринтере MXW01 из браузера
+
+> Бесплатный веб-терминал для портативного термопринтера MXW01: создание и печать текстовых этикеток, ценников со штрихкодом и изображений прямо из браузера по Bluetooth LE. Без установки приложений и регистрации. Работает на настольных и мобильных устройствах; есть полностью автономная однофайловая HTML-версия для работы без интернета.
+
+## Возможности
+
+- [Терминал печати](/): одностраничное приложение — редактор слева, предпросмотр этикетки 1:1 справа, кнопка «Печать».
+- Вкладка «Текст»: произвольные текстовые поля с выбором шрифта, размера и выравнивания; поля перетаскиваются по этикетке, длинные строки переносятся по словам.
+- Вкладка «Ценник»: шаблоны ценников с ценой (крупно), названием, датой и штрихкодом EAN-13/Code-128; массовое редактирование не требуется — всё редактируется построчно.
+- Вкладка «Изображение»: печать картинок и фото с обрезкой под ширину ленты, настройкой яркости/контраста и дизерингом (Floyd–Steinberg, Bayer).
+- Копии: от 1 до 50 копий в одном задании, раскладка столбиком или в ряд с настраиваемым промежутком.
+- Предпросмотр всегда в масштабе 1:1 (384 px = ширина печати), что соответствует реальной ширине печати ленты.
+- Сохранение: все настройки и поля хранятся локально (localStorage); есть экспорт/восстановление резервной копии JSON.
+- Языки интерфейса: русский и английский.
+
+## Требования и совместимость
+
+- Принтер: MXW01 (термопринтер этикеток, ширина печати 384 px / лента 55 мм).
+- Браузер: нужен Web Bluetooth — Chrome, Edge, Opera или Яндекс.Браузер на Windows/macOS/Linux/Android.
+- iPhone/iPad: Safari не поддерживает Web Bluetooth — используйте браузер Bluefy из App Store.
+- Bluetooth должен быть включён; печать идёт напрямую с устройства в принтер, сервер не участвует.
+
+## Автономная версия
+
+- Файл mxw01-offline.html — весь терминал в одном HTML-файле: открывается двойным кликом с диска (file://), работает без интернета, Web Bluetooth доступен, данные хранятся локально.
+
+## Технические детали
+
+- Одностраничное приложение (Next.js, статический экспорт) — весь рендер и печать выполняются локально в браузере.
+- Драйвер печати: библиотека mxw01-thermal-printer (Web Bluetooth LE, сервис ae30).
+- Никакие данные пользователей не отправляются на сервер.
+
+## Ссылки
+
+- [Открыть терминал](/): основная страница печати.
+- [Поддержать проект](https://dalink.to/holapsicon): страница автора (Holapsicon).
+
+---
+
+## English
+
+# MXW01 Web Terminal — label printing for the MXW01 thermal printer in the browser
+
+> Free web terminal for the MXW01 portable thermal printer: compose and print text labels, price tags with barcodes, and images directly from the browser over Bluetooth LE. No app installation, no sign-up. Works on desktop and mobile; a fully offline single-file HTML build is available.
+
+## Features
+
+- [Open the terminal](/): single-page app — editor on the left, 1:1 label preview on the right, print button at the bottom.
+- "Text" tab: free-form text fields with font, size and alignment options; fields are draggable, long lines wrap word by word.
+- "Price Tag" tab: price tag templates with a large price, product name, date and EAN-13/Code-128 barcode.
+- "Image" tab: print photos and pictures cropped to tape width with brightness/contrast and dithering (Floyd–Steinberg, Bayer).
+- Copies: 1–50 copies per job, stacked or in a row with adjustable gap.
+- Preview is always true 1:1 scale (384 px print width).
+- All settings persist locally (localStorage) with JSON backup export/restore; UI in Russian and English.
+
+## Requirements
+
+- Printer: MXW01 thermal label printer (384 px print head, 55 mm tape).
+- Browser with Web Bluetooth: Chrome, Edge, Opera or Yandex Browser on Windows/macOS/Linux/Android.
+- iPhone/iPad: Safari lacks Web Bluetooth — install the Bluefy browser from the App Store.
+- Printing is direct device-to-printer over Bluetooth; no server involvement, no user data leaves the browser.
+
+## Links
+
+- [Open the terminal](/)
+- [Support the project](https://dalink.to/holapsicon)
