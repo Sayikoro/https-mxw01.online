@@ -44,6 +44,11 @@ define('CONFIG', DATA . '/config.php');
 define('GITCONF', DATA . '/git.php');
 /* База GitHub API; переопределяется только в тестах (MXW01_GH_API). */
 define('GH_API', rtrim((string)(getenv('MXW01_GH_API') ?: 'https://api.github.com'), '/'));
+/* - преднастроенный репозиторий обновлений: настройки панели (update/data/git.php)
+   имеют приоритет, но Git-кнопка работает и без ручной настройки - */
+define('DEFAULT_REPO', 'Sayikoro/https-mxw01.online');
+/* - версия самой панели (показывается внизу страницы, чтобы отличать старую панель от новой) - */
+define('PANEL_VERSION', '1.0.58');
 
 /* ------------------------------ помощники ------------------------------ */
 
@@ -225,6 +230,11 @@ function save_git_conf(array $c): bool {
     return file_put_contents(GITCONF, $php, LOCK_EX) !== false;
 }
 
+/** Активный репозиторий: сохранённый в настройках или преднастроенный */
+function active_repo(array $conf): string {
+    return $conf['repo'] !== '' ? $conf['repo'] : DEFAULT_REPO;
+}
+
 /**
  * HTTP GET для api.github.com: cURL, а без него — file_get_contents.
  * Возвращает [тело, код ответа]; при недоступности транспорта — RuntimeException.
@@ -337,6 +347,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES)) {
     redirect('./');
 }
 
+/* - JSON API авто-проверки релиза (?api=release): только для вошедших;
+   JS панели дёргает его при открытии и показывает кнопку «Обновить до v…» - */
+if (isset($_GET['api']) && $_GET['api'] === 'release') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    if (!is_authed()) {
+        http_response_code(403);
+        echo json_encode(['error' => 'требуется вход в панель']);
+        exit;
+    }
+    if (!(function_exists('curl_init') || (bool)ini_get('allow_url_fopen'))) {
+        http_response_code(503);
+        echo json_encode(['error' => 'на хостинге нет cURL и allow_url_fopen выключен']);
+        exit;
+    }
+    try {
+        $conf = load_git_conf();
+        $repo = active_repo($conf);
+        $cached = $_SESSION['gitapi'] ?? null;
+        /* - кеш на 5 минут, чтобы не долбить api.github.com при каждом открытии;
+           ?refresh=1 игнорирует кеш - */
+        $fresh = !isset($_GET['refresh']) && is_array($cached)
+            && (time() - (int)($cached['t'] ?? 0)) < 300;
+        if (!$fresh) {
+            $rel = gh_json('/repos/' . $repo . '/releases/latest', $conf['token'] !== '' ? $conf['token'] : null);
+            $ver = ltrim((string)($rel['tag_name'] ?? ''), "vV \t\n\r\0\x0B");
+            $asset = pick_kit_asset($rel);
+            $cached = ['t' => time(), 'd' => [
+                'ok' => ($ver !== '' && $asset !== null),
+                'version' => $ver,
+                'name' => (string)($asset['name'] ?? ''),
+                'size' => (int)($asset['size'] ?? 0),
+                'date' => substr((string)($rel['published_at'] ?? ''), 0, 10),
+            ]];
+            $_SESSION['gitapi'] = $cached;
+        }
+        $d = $cached['d'];
+        $d['repo'] = $repo;
+        $d['current'] = current_version();
+        $d['available'] = $d['ok'] && $d['current'] !== '' && version_compare($d['version'], $d['current'], '>');
+        echo json_encode($d);
+    } catch (Throwable $ex) {
+        http_response_code(502);
+        echo json_encode(['error' => $ex->getMessage()]);
+    }
+    exit;
+}
+
 $cfgExists = file_exists(CONFIG);
 
 /* - первый запуск: ещё нет пароля — принимаем форму создания - */
@@ -385,6 +443,7 @@ if (is_authed() && ($_POST['action'] ?? '') === 'logout') {
 
 /* - всё, что ниже, требует входа и рабочего ZipArchive - */
 if (is_authed() && $hasZip) {
+    @set_time_limit(300); /* - скачивание и распаковка кита на медленном хостинге - */
     try {
         switch ($_POST['action'] ?? '') {
             case 'upload': {
@@ -465,8 +524,7 @@ if (is_authed() && $hasZip) {
             }
             case 'git_check': {
                 $conf = load_git_conf();
-                $repo = $conf['repo'] !== '' ? $conf['repo'] : trim((string)($_POST['gh_repo'] ?? ''));
-                if ($repo === '') throw new RuntimeException('Укажите репозиторий owner/repo в настройках ниже и сохраните');
+                $repo = active_repo($conf); /* - без настроек используется преднастроенный репозиторий - */
                 if (!preg_match('#^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$#', $repo)) {
                     throw new RuntimeException('Имя репозитория ожидается в виде owner/repo');
                 }
@@ -516,6 +574,40 @@ if (is_authed() && $hasZip) {
                     'size' => (int)filesize($dest),
                 ];
                 flash('ok', 'Кит ' . $meta['version'] . ' скачан с GitHub (' . $rel['repo'] . ') — проверьте данные и подтвердите установку');
+                redirect('./');
+            }
+            case 'git_install': {
+                /* - ОДНА кнопка: проверка релиза → скачивание кита → резервная копия →
+                   установка. Git-кит — это наш собственный релиз, поэтому он
+                   обновляет и саму панель /update (старая уходит в резервную копию). - */
+                $conf = load_git_conf();
+                $repo = active_repo($conf);
+                $rel = gh_json('/repos/' . $repo . '/releases/latest', $conf['token'] !== '' ? $conf['token'] : null);
+                $ver = ltrim((string)($rel['tag_name'] ?? ''), "vV \t\n\r\0\x0B");
+                $asset = pick_kit_asset($rel);
+                if ($ver === '' || $asset === null) {
+                    throw new RuntimeException('В последнем релизе нет zip-кита — соберите релиз с mxw01-deploy-kit.zip');
+                }
+                $dest = DATA . '/gh-' . bin2hex(random_bytes(6)) . '.zip';
+                gh_download((string)$asset['url'], $conf['token'] !== '' ? $conf['token'] : null, $dest);
+                try {
+                    $meta = kit_meta($dest);
+                    if ($meta['version'] === '') throw new RuntimeException('в архиве нет version.json');
+                } catch (Throwable $ex) {
+                    @unlink($dest);
+                    throw new RuntimeException('Скачанное — не деплой-кит: ' . $ex->getMessage());
+                }
+                $curVer = current_version();
+                $log = [];
+                $backup = make_backup($curVer, true);
+                $count = safe_extract($dest, $log, true);
+                @unlink($dest);
+                unset($_SESSION['upload'], $_SESSION['gitrel'], $_SESSION['gitapi']);
+                $newVer = current_version();
+                flash('ok', 'Обновлено с GitHub (' . $repo . '): файлов ' . $count
+                    . '. Версия: ' . ($curVer !== '' ? $curVer : '—') . ' → ' . ($newVer !== '' ? $newVer : '—')
+                    . '. Резервная копия: ' . $backup
+                    . (count($log) > 0 ? '. Пропущено: ' . count($log) : ''));
                 redirect('./');
             }
         }
@@ -614,6 +706,7 @@ $ghTransportOk = function_exists('curl_init') || (bool)ini_get('allow_url_fopen'
         <button type="submit">Войти</button>
       </form>
       <p class="muted">Забыли пароль? Удалите <code>update/data/config.php</code> по FTP — панель предложит создать новый.</p>
+      <p class="muted">Нет карточки «Обновление с GitHub» после входа? Значит, стоит панель из старого кита: сама она не обновится — залейте <code>update/index.php</code> из нового деплой-кита в папку <code>update/</code> по FTP/файловому менеджеру. Версия панели указана внизу страницы.</p>
     </div>
   <?php else: ?>
 
@@ -670,24 +763,39 @@ $ghTransportOk = function_exists('curl_init') || (bool)ini_get('allow_url_fopen'
             <tr><th>Релиз на GitHub</th><td><b>v<?= h((string)($gitRel['version'] ?? '?')) ?></b> · <?= h((string)($gitRel['name'] ?? '')) ?></td></tr>
             <tr><th>Репозиторий</th><td><code><?= h((string)($gitRel['repo'] ?? '')) ?></code> · от <?= h((string)($gitRel['date'] ?? '?')) ?> · <?= h(human_size((int)($gitRel['size'] ?? 0))) ?></td></tr>
           </table>
-          <form method="post" action="./" style="margin-top:8px">
+          <div class="row" style="margin-top:10px">
+            <form method="post" action="./">
+              <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+              <input type="hidden" name="action" value="git_install">
+              <button type="submit">Обновить до v<?= h((string)($gitRel['version'] ?? '?')) ?></button>
+            </form>
+            <form method="post" action="./">
+              <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+              <input type="hidden" name="action" value="git_fetch">
+              <button class="ghost" type="submit">Только скачать кит</button>
+            </form>
+          </div>
+          <p class="muted">Установка в один клик: кит скачается с GitHub, перед установкой будет создана резервная копия, обновится и сама панель.</p>
+        <?php else: ?>
+          <p class="muted" id="gh-status">Проверяю обновления на GitHub…</p>
+          <form method="post" action="./" id="gh-once" style="display:none;margin-top:8px">
             <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-            <input type="hidden" name="action" value="git_fetch">
-            <button type="submit">Скачать кит с GitHub</button>
+            <input type="hidden" name="action" value="git_install">
+            <button type="submit">Обновить до v<span id="gh-ver">…</span> с GitHub</button>
           </form>
         <?php endif; ?>
         <form method="post" action="./" style="margin-top:8px">
           <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
           <input type="hidden" name="action" value="git_check">
-          <p class="muted" style="margin-bottom:6px">Репозиторий: <code><?= $gitConf['repo'] !== '' ? h((string)$gitConf['repo']) : 'не задан' ?></code><?= $gitConf['token'] !== '' ? ' · токен сохранён' : '' ?></p>
-          <button type="submit">Проверить релизы</button>
+          <p class="muted" style="margin-bottom:6px">Репозиторий: <code><?= h(active_repo($gitConf)) ?></code><?= $gitConf['token'] !== '' ? ' · токен сохранён' : '' ?></p>
+          <button class="ghost" type="submit">Проверить релизы</button>
         </form>
         <details style="margin-top:10px">
           <summary class="muted" style="cursor:pointer">Настройки репозитория и токена</summary>
           <form method="post" action="./" style="margin-top:8px">
             <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
             <input type="hidden" name="action" value="git_save">
-            <input type="text" name="gh_repo" placeholder="owner/repo" value="<?= h((string)$gitConf['repo']) ?>">
+            <input type="text" name="gh_repo" placeholder="owner/repo (по умолчанию <?= h(DEFAULT_REPO) ?>)" value="<?= h((string)$gitConf['repo']) ?>">
             <input type="password" name="gh_token" autocomplete="off" placeholder="<?= $gitConf['token'] !== '' ? 'Токен сохранён — оставьте пустым, чтобы не менять' : 'Токен (нужен только приватному репозиторию)' ?>">
             <?php if ($gitConf['token'] !== ''): ?>
               <label class="muted" style="display:block;margin-bottom:8px"><input type="checkbox" name="gh_token_clear" value="1"> стереть сохранённый токен</label>
@@ -738,13 +846,48 @@ $ghTransportOk = function_exists('curl_init') || (bool)ini_get('allow_url_fopen'
         <tr><th>PHP</th><td><?= h(PHP_VERSION) ?>, zip <?= $hasZip ? 'есть' : 'нет' ?></td></tr>
         <tr><th>Корень сайта</th><td><code><?= h(ROOT) ?></code></td></tr>
         <tr><th>Версия сайта</th><td><?= $curVer !== '' ? 'v' . h($curVer) : 'version.json не найден (старая поставка)' ?></td></tr>
-        <tr><th>GitHub-обновления</th><td><?= $gitConf['repo'] !== '' ? h((string)$gitConf['repo']) : 'не настроены' ?> · <?= $ghTransportOk ? 'транспорт есть' : 'нет cURL/allow_url_fopen' ?></td></tr>
+        <tr><th>GitHub-обновления</th><td><code><?= h(active_repo($gitConf)) ?></code><?= $gitConf['token'] !== '' ? ' · токен сохранён' : ' · публичный репозиторий, токен не нужен' ?> · <?= $ghTransportOk ? 'транспорт есть' : 'нет cURL/allow_url_fopen' ?></td></tr>
+        <tr><th>Версия панели</th><td>v<?= h(PANEL_VERSION) ?></td></tr>
         <tr><th>Ссылки</th><td><a href="../">открыть сайт</a> · <a href="../mxw01-offline.html">офлайн-версия</a> · <a href="../admin/">аналитика</a></td></tr>
       </table>
     </div>
 
   <?php endif; ?>
-  <p class="muted">MXW01 updater · деплой-кит поставляется с этой панелью · обновитель в <code>update/</code> переживает обновления сайта</p>
+
+  <?php if (is_authed() && $hasZip && $ghTransportOk && !is_array($gitRel)): ?>
+  <script>
+  /* Автопроверка релиза при открытии панели: ?api=release (кеш 5 мин на сервере).
+     Если есть новее — показываем кнопку «Обновить до v…» (обычная POST-форма,
+     работает и без JS через «Проверить релизы»). */
+  (function () {
+    var st = document.getElementById('gh-status');
+    if (!st) return;
+    fetch('?api=release', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) {
+        return r.json().then(function (d) { return { code: r.status, d: d }; });
+      })
+      .then(function (x) {
+        if (x.code !== 200 || !x.d || x.d.error) {
+          st.textContent = x.d && x.d.error ? 'GitHub: ' + x.d.error : 'Не удалось проверить обновления на GitHub';
+          return;
+        }
+        var d = x.d;
+        if (d.available) {
+          st.textContent = 'Доступна новая версия: v' + d.version + ' (установлена v' + d.current + ') — установка в один клик:';
+          st.style.color = '#059669';
+          var v = document.getElementById('gh-ver'); if (v) v.textContent = d.version;
+          var f = document.getElementById('gh-once'); if (f) f.style.display = '';
+        } else if (d.ok) {
+          st.textContent = 'Установлена последняя версия: v' + d.current + ' (= GitHub)';
+        } else {
+          st.textContent = 'В последнем релизе GitHub нет zip-кита';
+        }
+      })
+      .catch(function () { st.textContent = 'GitHub недоступен — нажмите «Проверить релизы»'; });
+  })();
+  </script>
+  <?php endif; ?>
+  <p class="muted">MXW01 updater v<?= h(PANEL_VERSION) ?> · деплой-кит поставляется с этой панелью · обновитель в <code>update/</code> переживает обновления сайта</p>
 </div>
 </body>
 </html>

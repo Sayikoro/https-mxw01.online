@@ -10,18 +10,22 @@
 # реально отправляет сохранённый токен.
 #
 # Сценарий:
-#   1. git_check без настроек → «Укажите репозиторий»;
+#   1. git_check без настроек → преднастроенный репозиторий (мок отвечает 404);
 #   2. git_save (owner/repo + токен) → git.php создан, токена нет в HTML;
 #   3. git_check → «Доступна новая версия 9.9.9-test», карточка релиза,
-#      кнопка «Скачать кит с GitHub»;
+#      кнопка «Обновить до v9.9.9-test» (git_install) и «Только скачать кит»;
 #   4. git_fetch → кит скачан, превью установки с версией 9.9.9-test;
+#   4b. ?api=release: JSON available:true для вошедшего; без cookies — 403;
 #   5. install с галочкой «обновить также панель»: версия сайта 9.9.9-test,
 #      update/index.php обновился (маркер TEST-OLD-PANEL исчез, git_check
 #      появился), в резервной копии есть и update/index.php, и версия 1.0.0;
 #   6. restore → откатились и сайт (1.0.0), и панель (TEST-OLD-PANEL вернулся);
 #   7. повторный цикл install БЕЗ галочки → update/index.php не перезаписан;
 #   8. CSRF: git_check с чужим токеном отклонён;
-#   9. update/data/git.php по прямой ссылке не отдаётся (пусто).
+#   9. ОДНА кнопка git_install: проверка → скачивание → копия → установка
+#      (панель обновляется автоматически, gh-*.zip удаляется, кеш api сброшен);
+#  10. api=release&refresh=1 после установки → available:false;
+#  11. update/data/git.php по прямой ссылке не отдаётся (пусто).
 # ============================================================================
 set -u
 cd "$(dirname "$0")/.."
@@ -68,9 +72,13 @@ EOF
 # ---------- мок api.github.com ----------
 cat > "$DIR/mock-gh.php" <<EOF
 <?php
-// Мок GitHub API: требует Bearer-токен, отдаёт релиз v9.9.9-test и кит.
+// Мок GitHub API. /repos/testuser/mxw01/* — «приватный репозиторий»:
+// требует Bearer $TOKEN и отдаёт релиз v9.9.9-test и кит.
+// Прочие /repos/* (в т.ч. преднастроенный Sayikoro/…) — публичные,
+// токен не нужен, но репозиторий неизвестен → 404 (как на реальном GitHub).
 \$uri = parse_url(\$_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-if ((\$_SERVER['HTTP_AUTHORIZATION'] ?? '') !== 'Bearer $TOKEN') {
+\$priv = (strpos(\$uri, '/repos/testuser/mxw01') === 0);
+if (\$priv && (\$_SERVER['HTTP_AUTHORIZATION'] ?? '') !== 'Bearer $TOKEN') {
     http_response_code(401);
     header('Content-Type: application/json');
     echo json_encode(['message' => 'Bad credentials']);
@@ -116,9 +124,10 @@ curl -s -L -b "$JAR" -c "$JAR" -d "csrf=$csrf" -d "action=setup" -d "password=se
 panel=$(curl -s -L -b "$JAR" -c "$JAR" -d "csrf=$csrf" -d "action=login" -d "password=secret123" "$BASE/update/")
 check "вход выполнен" "$(echo "$panel" | rg -c 'Обновление с GitHub' | head -1)"
 
-echo "== 1. git_check без настроек =="
+echo "== 1. git_check без настроек: уходит в преднастроенный репозиторий =="
 noRepo=$(post -d "action=git_check")
-check "без репозитория → подсказка" "$(echo "$noRepo" | rg -c 'Укажите репозиторий' | head -1)"
+check "мок отвечает 404 по преднастроенному репо (без токена)" "$(echo "$noRepo" | rg -c 'не найдено \(404\)' | head -1)"
+check "в карточке показан преднастроенный репозиторий" "$(echo "$noRepo" | rg -c 'Sayikoro/https-mxw01\.online' | head -1)"
 
 echo "== 2. git_save =="
 saved=$(post -d "action=git_save" -d "gh_repo=testuser/mxw01" -d "gh_token=$TOKEN")
@@ -132,13 +141,26 @@ echo "== 3. git_check =="
 chk=$(post -d "action=git_check")
 check "флеш: доступна 9.9.9-test" "$(echo "$chk" | rg -c 'Доступна новая версия 9\.9\.9-test \(установлена 1\.0\.0\)' | head -1)"
 check "карточка релиза: имя ассета" "$(echo "$chk" | rg -c 'mxw01-deploy-kit\.zip' | head -1)"
-check "кнопка «Скачать кит с GitHub»" "$(echo "$chk" | rg -c 'name="action" value="git_fetch"' | head -1)"
+check "кнопка-в-один-клик «Обновить до v9.9.9-test»" "$(echo "$chk" | rg -c 'Обновить до v9\.9\.9-test' | head -1)"
+check "кнопка git_install присутствует" "$(echo "$chk" | rg -c 'name="action" value="git_install"' | head -1)"
+check "кнопка «Только скачать кит» (git_fetch) присутствует" "$(echo "$chk" | rg -c 'name="action" value="git_fetch"' | head -1)"
 
 echo "== 4. git_fetch =="
 fetched=$(post -d "action=git_fetch")
 check "кит скачан с GitHub" "$(echo "$fetched" | rg -c 'Кит 9\.9\.9-test скачан с GitHub' | head -1)"
 check "превью установки с версией 9.9.9-test" "$(echo "$fetched" | rg -c '9\.9\.9-test' | head -1)"
 check "появилась галочка «обновить также панель»" "$(echo "$fetched" | rg -c 'name="with_upd"' | head -1)"
+
+echo "== 4b. ?api=release (JSON авто-проверки) =="
+api=$(curl -s -b "$JAR" "$BASE/update/?api=release")
+api_ok=$(echo "$api" | python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if d.get('available') is True and d.get('version')=='9.9.9-test' and d.get('current')=='1.0.0' and d.get('repo')=='testuser/mxw01' and d.get('name')=='mxw01-deploy-kit.zip' and d.get('size',0)>0 else '0')")
+check "JSON: available=true, версия/репо/ассет на месте" "$api_ok"
+api403=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/update/?api=release")
+check "без сессии → 403" "$([ "$api403" = "403" ] && echo 1)"
+api403body=$(curl -s "$BASE/update/?api=release")
+check "403 — JSON с ошибкой, не HTML" "$(echo "$api403body" | python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if 'error' in d else '0')")"
+apiCache=$(curl -s -b "$JAR" "$BASE/update/?api=release")
+check "повторный вызов отдаётся из кеша (тот же JSON)" "$(echo "$apiCache" | python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if d.get('available') is True else '0')")"
 
 echo "== 5. Установка с обновлением панели =="
 inst=$(post -d "action=install" -d "with_upd=1")
@@ -171,10 +193,28 @@ check "сайт обновился до 9.9.9-test" "$(rg -c '9\.9\.9-test' "$SI
 NEW_HASH=$(sha256sum "$SITE/update/index.php" | cut -d' ' -f1)
 check "update/index.php НЕ перезаписан (хеш тот же)" "$([ "$UPD_HASH" = "$NEW_HASH" ] && echo 1)"
 
-echo "== 8. CSRF и прямой доступ =="
+echo "== 8. CSRF =="
 csrf="$(get_csrf)"
 evil=$(curl -s -L -b "$JAR" -c "$JAR" -d "csrf=deadbeef" -d "action=git_check" "$BASE/update/")
 check "git_check с чужим CSRF отклонён" "$(echo "$evil" | rg -c 'CSRF' | head -1)"
+
+echo "== 9. Одна кнопка git_install (проверка+скачивание+копия+установка) =="
+BAK_BEFORE=$(ls -1 "$SITE/update/data/backups/"backup-*.zip 2>/dev/null | wc -l)
+inst1=$(post -d "action=git_install")
+check "флеш: обновлено с GitHub (testuser/mxw01)" "$(echo "$inst1" | rg -c 'Обновлено с GitHub \(testuser/mxw01\): файлов' | head -1)"
+check "версия сайта 9.9.9-test" "$(rg -c '9\.9\.9-test' "$SITE/version.json")"
+check "панель обновилась сама (git_install внутри)" "$(rg -c "case 'git_install'" "$SITE/update/index.php")"
+check "старый маркер панели исчез" "$([ -z "$(rg -c 'TEST-OLD-PANEL' "$SITE/update/index.php")" ] && echo 1)"
+check "gh-*.zip удалён после установки" "$([ -z "$(ls "$SITE/update/data/"gh-*.zip 2>/dev/null)" ] && echo 1)"
+BAK_AFTER=$(ls -1 "$SITE/update/data/backups/"backup-*.zip 2>/dev/null | wc -l)
+check "резервная копия создана (+1)" "$([ "$BAK_AFTER" -gt "$BAK_BEFORE" ] && echo 1)"
+
+echo "== 10. api=release&refresh=1 после установки: обновления нет =="
+api2=$(curl -s -b "$JAR" "$BASE/update/?api=release&refresh=1")
+api2ok=$(echo "$api2" | python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if d.get('available') is False and d.get('current')=='9.9.9-test' and d.get('version')=='9.9.9-test' else '0')")
+check "JSON: available=false (установлена = GitHub)" "$api2ok"
+
+echo "== 11. Прямой доступ к данным панели =="
 gitcfg=$(curl -s "$BASE/update/data/git.php")
 check "git.php по прямой ссылке не отдаётся (пусто)" "$([ -z "$gitcfg" ] && echo 1)"
 
