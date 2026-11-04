@@ -13,7 +13,10 @@
     на относительные, с negative lookbehind — чтобы не задеть уже
     относительные пути;
   • update/index.php — админ-панель обновлений (источник: scripts/php-update/):
-    вход по паролю, загрузка нового кита, бэкапы и откат;
+    вход по паролю, загрузка нового кита, бэкапы и откат, Git-режим;
+  • admin/index.php + admin/hit.php — админка аналитики (источник:
+    scripts/php-admin/): живой дашборд по посещениям сайта (коллектор
+    hit.php пишет хиты в admin/data/hits/, пароль — только хешем);
   • README-УСТАНОВКА.md — короткая инструкция.
 
 Порядок полного релиза: build-offline.sh → build-static.sh (сам вызывает
@@ -32,6 +35,7 @@ OUT_DIR = os.path.join(ROOT, "download")
 OUT = os.path.join(OUT_DIR, "mxw01-deploy-kit.zip")
 OFFLINE = os.path.join(OUT_DIR, "mxw01-offline.html")
 UPDATER_SRC = os.path.join(ROOT, "scripts", "php-update", "index.php")
+ADMIN_SRC = os.path.join(ROOT, "scripts", "php-admin")
 SITE_TS = os.path.join(ROOT, "src", "lib", "printer", "site.ts")
 
 
@@ -156,6 +160,17 @@ README = """# Установка сайта печати MXW01
 4. На сайте кнопка «Проверить обновления» (Настройки) сверяет версию
    с релизами публичного репозитория и ведёт в эту панель.
 
+## Аналитика /admin (v1.0.58+)
+1. Откройте `https://домен/admin/` — при первом визите задайте пароль
+   (хранится только хешем в admin/data/config.php).
+2. Сайт начиная с v1.0.58 сам отправляет посещения в admin/hit.php:
+   живой дашборд (сейчас на сайте, KPI, графики по часам/30 дней,
+   топы страниц/источников/браузеров/устройств, лента визитов).
+3. Приватность: сырой IP не хранится — только солёный HMAC-хеш;
+   salt замаскирован в настройках; пароль в журнал аудита не пишется.
+4. На nginx закройте данные: `location ^~ /admin/data/ { deny all; }`
+   (на Apache их закрывает .htaccess, создаваемый автоматически).
+
 ## Обновление вручную (без PHP)
 Полностью удалите старые файлы сайта (кроме update/, если используете
 панель) и повторите установку.
@@ -192,6 +207,10 @@ def main() -> int:
             z.write(OFFLINE, "mxw01-offline.html")
         z.writestr("version.json", version_json)
         z.write(UPDATER_SRC, "update/index.php")
+        for admin_name in ("index.php", "hit.php"):
+            admin_file = os.path.join(ADMIN_SRC, admin_name)
+            if os.path.exists(admin_file):
+                z.write(admin_file, "admin/" + admin_name)
         z.writestr("install.php", INSTALL_PHP)
         z.writestr("README-УСТАНОВКА.md", README)
 
@@ -199,10 +218,13 @@ def main() -> int:
         print("  ⚠ mxw01-offline.html не найден — «Сохранить страницу» отдаст 404;")
         print("    соберите офлайн-версию (bash scripts/build-offline.sh) и переупакуйте")
 
+    admin_count = sum(1 for n in ("index.php", "hit.php")
+                      if os.path.exists(os.path.join(ADMIN_SRC, n)))
+    extra = 4 + admin_count + (1 if has_offline else 0)
     size = os.path.getsize(OUT)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     print(f"✓ {OUT}")
-    print(f"  версия: {ver}, файлов: {count + 4 + (1 if has_offline else 0)}, размер: {size / 1024:.0f} КБ, {stamp}")
+    print(f"  версия: {ver}, файлов: {count + extra}, размер: {size / 1024:.0f} КБ, {stamp}")
     return 0
 
 

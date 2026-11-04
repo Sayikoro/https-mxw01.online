@@ -74,6 +74,7 @@ import {
   Printer,
   RefreshCw,
   RotateCcw,
+  Send,
   Settings,
   Sun,
   Trash2,
@@ -1267,6 +1268,20 @@ export function AppHeader({
                     <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
+                {/* Разработчик: Telegram для связи (v1.0.58) */}
+                <a
+                  data-testid="developer-link"
+                  href="https://t.me/The_Sovereign_o_f_Dawn"
+                  target="_blank"
+                  rel="noreferrer"
+                  title={t("set.developerHint")}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-sky-600 hover:underline dark:text-sky-400"
+                >
+                  <Send className="h-3 w-3" />
+                  {t("set.developer")}:
+                  <span className="tabular-nums">@The_Sovereign_o_f_Dawn</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
               </div>
 
               <div className="border-t border-slate-200 dark:border-slate-800" />

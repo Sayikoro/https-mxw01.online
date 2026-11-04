@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Analytics, GtmNoscript } from "@/components/printer/analytics";
 import { PwaRegister } from "@/components/printer/pwa-register";
+import { SelfHit } from "@/components/printer/self-hit";
 import { absoluteUrl } from "@/lib/printer/site";
 
 const geistSans = Geist({
@@ -100,6 +101,7 @@ try {
         <GtmNoscript />
         <Analytics />
         <PwaRegister />
+        <SelfHit />
         {children}
         <Toaster />
       </body>

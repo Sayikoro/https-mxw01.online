@@ -432,6 +432,8 @@ export const ru: Record<string, string> = {
   "set.updatesFail": "Не удалось проверить обновления. Проверьте соединение.",
   "set.updatesNew": "Доступна версия {ver} — установите её через панель обновлений.",
   "set.updatesOpen": "Открыть панель обновлений",
+  "set.developer": "Разработчик",
+  "set.developerHint": "Вопросы, идеи и пожелания — в Telegram",
   "set.backupTitle": "Бэкап и восстановление",
   "set.backupSave": "Скачать бэкап",
   "set.backupRestore": "Восстановить из файла",

@@ -430,6 +430,8 @@ export const en: Record<string, string> = {
   "set.updatesFail": "Could not check for updates. Check your connection.",
   "set.updatesNew": "Version {ver} is available — install it via the update panel.",
   "set.updatesOpen": "Open the update panel",
+  "set.developer": "Developer",
+  "set.developerHint": "Questions, ideas and feedback — on Telegram",
   "set.backupTitle": "Backup & restore",
   "set.backupSave": "Download backup",
   "set.backupRestore": "Restore from file",

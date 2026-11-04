@@ -739,7 +739,7 @@ $ghTransportOk = function_exists('curl_init') || (bool)ini_get('allow_url_fopen'
         <tr><th>Корень сайта</th><td><code><?= h(ROOT) ?></code></td></tr>
         <tr><th>Версия сайта</th><td><?= $curVer !== '' ? 'v' . h($curVer) : 'version.json не найден (старая поставка)' ?></td></tr>
         <tr><th>GitHub-обновления</th><td><?= $gitConf['repo'] !== '' ? h((string)$gitConf['repo']) : 'не настроены' ?> · <?= $ghTransportOk ? 'транспорт есть' : 'нет cURL/allow_url_fopen' ?></td></tr>
-        <tr><th>Ссылки</th><td><a href="../">открыть сайт</a> · <a href="../mxw01-offline.html">офлайн-версия</a></td></tr>
+        <tr><th>Ссылки</th><td><a href="../">открыть сайт</a> · <a href="../mxw01-offline.html">офлайн-версия</a> · <a href="../admin/">аналитика</a></td></tr>
       </table>
     </div>
 

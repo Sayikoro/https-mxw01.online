@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 /**
- * Playwright v1.0.57 — кнопка «Проверить обновления» (проверка GitHub-релизов).
+ * Playwright v1.0.58 — кнопка «Проверить обновления» (проверка GitHub-релизов).
  * Запуск: NODE_PATH=$(npm root -g) timeout 180 node scripts/v156-update-check.js
  *
  * GITHUB_REPO вписан в site.ts — api.github.com перехватывается через page.route
@@ -9,7 +9,7 @@
  *   2. Клик при релизе, равном текущей версии → тихо уходит в SW-ветку
  *      (в dev — «проверять нечего»);
  *   3. Ссылка «Открыть панель обновлений» без нового релиза НЕ показывается;
- *   4. Версия в Настройках — v1.0.57;
+ *   4. Версия в Настройках — v1.0.58;
  *   5. Повторный клик не ломает UI (статус снова показывается);
  *   6. Релиз НОВЕЕ (v1.0.99) → оранжевый статус «Доступна версия 1.0.99»
  *      и ссылка «Открыть панель обновлений» → /update/ в новой вкладке;
@@ -130,7 +130,7 @@ async function openSettings(page) {
   ok(await btn.isVisible(), "кнопка «Проверить обновления» видна в Настройках");
 
   // 2. Клик при релизе, равном текущей версии → SW-ветка (в dev — «проверять нечего»)
-  await mockRelease("v1.0.57");
+  await mockRelease("v1.0.58");
   await btn.click();
   const st0 = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(st0),
@@ -143,7 +143,7 @@ async function openSettings(page) {
 
   // 4. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.57"), `в Настройках версия 1.0.57 (${ver.trim()})`);
+  ok(ver.includes("1.0.58"), `в Настройках версия 1.0.58 (${ver.trim()})`);
 
   // 5. Повторный клик — UI жив
   await btn.click();
@@ -173,7 +173,7 @@ async function openSettings(page) {
   await unmock();
 
   // 7. Релиз снова равен текущей → статус «проверять нечего», ссылки нет
-  await mockRelease("v1.0.57");
+  await mockRelease("v1.0.58");
   await btn.click();
   const stB = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(stB) && !stB.includes("1.0.99"),

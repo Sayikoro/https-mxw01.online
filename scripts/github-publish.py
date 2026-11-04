@@ -100,12 +100,14 @@ def gh(method: str, url: str, token: str, payload=None, raw=None, ctype=None):
         code = e.code
     except OSError as e:
         fail(f"Сеть недоступна ({method} {url.split('github.com')[-1]}): {e}")
-    if payload is None and raw is None:
-        try:
-            return code, json.loads(body)
-        except (ValueError, TypeError):
-            return code, body.decode("utf-8", "replace")
-    return code, None
+    # Ответ парсим для ЛЮБОГО запроса: POST с payload тоже возвращает JSON
+    # (созданный релиз с его id — без этого не прикрепить ассет).
+    if not body:
+        return code, None
+    try:
+        return code, json.loads(body)
+    except (ValueError, TypeError):
+        return code, body.decode("utf-8", "replace")
 
 
 def release_notes(ver: str) -> str:
