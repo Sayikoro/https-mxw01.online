@@ -7,7 +7,9 @@
  * Кейсы:
  *   1. В Настройках видна ссылка «Разработчик» на https://t.me/The_Sovereign_o_f_Dawn
  *      (target=_blank, иконка, подпись локализована RU/EN);
- *   2. Версия в Настройках — v1.0.59;
+ *   1b. В ФУТЕРЕ (сторона пользователя, v1.0.60) видна та же ссылка —
+ *      без открытия настроек, с иконкой и локализованной подписью;
+ *   2. Версия в Настройках — v1.0.60;
  *   3. Телеметрия: на /admin/hit.php ушёл POST с JSON (type=page, vid, p)
  *      — navigator.sendBeacon перехватывается как request POST;
  *   4. Ссылка открывает адрес Telegram в новой вкладке (проверка href/target);
@@ -95,6 +97,21 @@ async function openSettings(page) {
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("header", { timeout: 30000 });
+
+  // 1b. Футер: кредит разработчика на стороне пользователя (v1.0.60)
+  const fdev = page.locator('[data-testid="footer-developer-link"]');
+  await fdev.scrollIntoViewIfNeeded();
+  ok((await fdev.count()) === 1 && (await fdev.isVisible()),
+    "футер: ссылка «Разработчик» видна без открытия настроек");
+  ok(((await fdev.getAttribute("href")) ?? "") === "https://t.me/The_Sovereign_o_f_Dawn",
+    "футер: href ведёт на Telegram");
+  ok((await fdev.getAttribute("target")) === "_blank" && /noopener/.test((await fdev.getAttribute("rel")) ?? ""),
+    "футер: ссылка в новой вкладке с noopener");
+  ok(/Разработчик|Developer/.test((await fdev.innerText()).replace(/\s+/g, " ")) &&
+     /@The_Sovereign_o_f_Dawn/.test((await fdev.innerText()).replace(/\s+/g, " ")),
+    "футер: подпись «Разработчик: @The_Sovereign_o_f_Dawn»");
+  ok((await fdev.locator("svg").count()) >= 1, "футер: у ссылки есть иконка");
+
   await openSettings(page);
 
   // 1. Ссылка «Разработчик»
@@ -113,7 +130,7 @@ async function openSettings(page) {
 
   // 2. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.59"), `в Настройках версия 1.0.59 (${ver.trim()})`);
+  ok(ver.includes("1.0.60"), `в Настройках версия 1.0.60 (${ver.trim()})`);
 
   // 3. Телеметрия: page-хит ушёл на /admin/hit.php
   await page.waitForTimeout(1200);

@@ -746,3 +746,12 @@
 - site.ts 1.0.59; public/sw.js → mxw01-pwa-v23.
 - Тесты: v156 расширен (мастер: при новом релизе и отсутствующей панели показывается инструкция + прямая ссылка на кит + «Проверить снова»; версии подняты до 1.0.59); test-php-update-git.sh 42/42, test-php-update.sh 27/27, test-admin.sh 46/46.
 - Правки: src/components/printer/app-header.tsx (мастер обновления), src/locales/ru.ts + en.ts (ключи set.upd*), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), scripts/v156-update-check.js, versions.md.
+
+### 1.0.60 — «Разработчик: @The_Sovereign_o_f_Dawn» на стороне пользователя (футер)
+
+- Запрос пользователя: кредит разработчика должен быть на стороне юзера. Ссылка уже была в Настройках (v1.0.58) и в админке — теперь она и в футере сайта, видимая всем без открытия настроек.
+- Футер (app-footer.tsx): в правой секции «Проект и поддержка», под строкой «Сделано Holapsicon ♥», добавлена ссылка «Разработчик: @The_Sovereign_o_f_Dawn» (иконка Send, t.me/The_Sovereign_o_f_Dawn, target=_blank, noopener noreferrer, data-testid="footer-developer-link", ховер — небесный).
+- Локали: ru «Разработчик» + подсказка «Вопросы, идеи и пожелания — в Telegram»; en «Developer» + «Questions, ideas and feedback — on Telegram» (footer.developer / footer.developerHint). Ссылка в Настройках и админке остаётся.
+- site.ts 1.0.60; public/sw.js → mxw01-pwa-v24.
+- Тесты: v158 расширен (футер-ссылка: видна, href/target/rel, подпись локализована; версия 1.0.60).
+- Правки: src/components/printer/app-footer.tsx, src/locales/ru.ts + en.ts (по 2 ключа), src/lib/printer/site.ts, public/sw.js, scripts/v158-dev-link.js, versions.md.

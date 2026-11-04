@@ -133,6 +133,8 @@ export const ru: Record<string, string> = {
   "footer.supportTitle": "Проект и поддержка",
   "footer.subtitle": "Терминал печати для портативных термопринтеров",
   "footer.madeBy": "Сделано",
+  "footer.developer": "Разработчик",
+  "footer.developerHint": "Вопросы, идеи и пожелания — в Telegram",
   "footer.donate": "Поддержать проект",
   "footer.faq1q": "Поддерживает ли веб-терминал печать оффлайн?",
   "footer.faq1a":

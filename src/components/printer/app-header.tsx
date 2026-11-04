@@ -578,8 +578,10 @@ export function AppHeader({
      src/lib/printer/site.ts) — если релиз новее установленной версии,
      переходим в состояние "new": дальше подключается мастер самообновления
      (проверяет панель /update на хостинге и ставит обновление сам);
-     (2) если релиза нет — обновляет service worker и сразу применяет новую
-     версию с перезагрузкой (SW ставит skipWaiting при install).
+     (2) если релиза нет — обновляет service worker: если SW реально
+     обновился, применяет новую версию с перезагрузкой (SW ставит
+     skipWaiting при install); если версия не менялась — «последняя версия»
+     без сброса страницы (v1.0.60).
      Без PWA (dev-режим, офлайн-копия) — честное сообщение. */
   const handleCheckUpdates = async () => {
     setUpdates("checking");
@@ -615,9 +617,25 @@ export function AppHeader({
         setUpdates("dev");
         return;
       }
-      await reg.update();
-      setUpdates("ready");
-      setTimeout(() => window.location.reload(), 1200);
+      /* v1.0.60: перезагружаем страницу ТОЛЬКО если SW реально обновился
+         (updatefound / waiting). Раньше reload был безусловным — страница
+         сбрасывалась даже при актуальной версии. */
+      let updated = false;
+      const onUpdateFound = () => {
+        updated = true;
+      };
+      reg.addEventListener("updatefound", onUpdateFound);
+      try {
+        await reg.update();
+      } finally {
+        reg.removeEventListener("updatefound", onUpdateFound);
+      }
+      if (updated || reg.waiting) {
+        setUpdates("ready");
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        setUpdates("ok");
+      }
     } catch {
       setUpdates("fail");
     }

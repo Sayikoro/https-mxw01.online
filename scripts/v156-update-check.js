@@ -9,7 +9,7 @@
  *   2. Клик при релизе, равном текущей версии → тихо уходит в SW-ветку
  *      (в dev — «проверять нечего»), мастер обновления НЕ показывается;
  *   3. Ссылка «Открыть панель обновлений» без нового релиза НЕ показывается;
- *   4. Версия в Настройках — v1.0.59;
+ *   4. Версия в Настройках — v1.0.60;
  *   5. Повторный клик не ломает UI (статус снова показывается);
  *   6. Релиз НОВЕЕ (v1.0.99) → оранжевый статус «Доступна версия 1.0.99»,
  *      мастер самообновления: /update/ на localhost нет → честная инструкция
@@ -132,7 +132,7 @@ async function openSettings(page) {
   ok(await btn.isVisible(), "кнопка «Проверить обновления» видна в Настройках");
 
   // 2. Клик при релизе, равном текущей версии → SW-ветка (в dev — «проверять нечего»)
-  await mockRelease("v1.0.59");
+  await mockRelease("v1.0.60");
   await btn.click();
   const st0 = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(st0),
@@ -147,7 +147,7 @@ async function openSettings(page) {
 
   // 4. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.59"), `в Настройках версия 1.0.59 (${ver.trim()})`);
+  ok(ver.includes("1.0.60"), `в Настройках версия 1.0.60 (${ver.trim()})`);
 
   // 5. Повторный клик — UI жив
   await btn.click();
@@ -193,7 +193,7 @@ async function openSettings(page) {
   await unmock();
 
   // 7. Релиз снова равен текущей → статус «проверять нечего», мастера нет
-  await mockRelease("v1.0.59");
+  await mockRelease("v1.0.60");
   await btn.click();
   const stB = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(stB) && !stB.includes("1.0.99"),

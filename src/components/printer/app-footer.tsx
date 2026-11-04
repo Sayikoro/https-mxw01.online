@@ -10,10 +10,15 @@
  *
  * Только UI-слой: на драйвер и отправку печати не влияет.
  */
-import { ChevronDown, ExternalLink, Heart } from "lucide-react";
+import { ChevronDown, ExternalLink, Heart, Send } from "lucide-react";
 import { SUPPORT_URL } from "@/components/printer/support-banner";
 import type { Translator } from "@/lib/printer/i18n";
 import { LogoMark } from "./logo";
+
+/* Ссылка на Telegram разработчика (v1.0.60) — видна всем пользователям
+ * сайта в футере, дублируется в Настройках и админке. */
+const DEVELOPER_TG = "https://t.me/The_Sovereign_o_f_Dawn";
+const DEVELOPER_HANDLE = "@The_Sovereign_o_f_Dawn";
 
 /* ------------------------------------------------------------------ */
 /* Компонент                                                           */
@@ -119,6 +124,21 @@ export function AppFooter({ t }: { t: Translator }) {
               className="h-3 w-3 fill-red-500 text-red-500 dark:fill-red-400 dark:text-red-400"
             />
           </p>
+          {/* v1.0.60: кредит разработчика — на стороне пользователя, в футере */}
+          <a
+            data-testid="footer-developer-link"
+            href={DEVELOPER_TG}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={t("footer.developerHint")}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-500 transition-colors hover:text-sky-600 dark:text-slate-400 dark:hover:text-sky-400"
+          >
+            <Send aria-hidden className="h-3 w-3" />
+            {t("footer.developer")}:
+            <span className="font-semibold text-sky-600 dark:text-sky-400">
+              {DEVELOPER_HANDLE}
+            </span>
+          </a>
           <a
             href={SUPPORT_URL}
             target="_blank"

@@ -9,7 +9,7 @@
  * Кэш версионирован: при выпуске новой версии меняется CACHE_VERSION,
  * старые кэши удаляются на activate.
  */
-const CACHE_VERSION = "mxw01-pwa-v23";
+const CACHE_VERSION = "mxw01-pwa-v24";
 const OFFLINE_URL = "/";
 
 self.addEventListener("install", (event) => {

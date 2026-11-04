@@ -131,6 +131,8 @@ export const en: Record<string, string> = {
   "footer.supportTitle": "Project & support",
   "footer.subtitle": "Printing terminal for portable thermal printers",
   "footer.madeBy": "Made by",
+  "footer.developer": "Developer",
+  "footer.developerHint": "Questions, ideas and feedback — on Telegram",
   "footer.donate": "Support the project",
   "footer.faq1q": "Does the web terminal support offline printing?",
   "footer.faq1a":
