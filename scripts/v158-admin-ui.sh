@@ -9,7 +9,7 @@ DIR="work/admin-ui-test"
 rm -rf "$DIR"; mkdir -p "$DIR/site/admin"
 cp scripts/php-admin/index.php "$DIR/site/admin/"
 cp scripts/php-admin/hit.php "$DIR/site/admin/"
-printf '{"app":"mxw01-print","version":"1.0.58"}' > "$DIR/site/version.json"
+printf '{"app":"mxw01-print","version":"1.0.59"}' > "$DIR/site/version.json"
 
 "$PHP" -S 127.0.0.1:8107 -t "$DIR/site" >/dev/null 2>&1 &
 SRV=$!

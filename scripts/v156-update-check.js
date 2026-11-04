@@ -1,19 +1,21 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 /**
- * Playwright v1.0.58 — кнопка «Проверить обновления» (проверка GitHub-релизов).
+ * Playwright v1.0.59 — кнопка «Проверить обновления» + мастер самообновления.
  * Запуск: NODE_PATH=$(npm root -g) timeout 180 node scripts/v156-update-check.js
  *
  * GITHUB_REPO вписан в site.ts — api.github.com перехватывается через page.route
  * (реальная сеть в тестах не участвует). Кейсы:
  *   1. Кнопка «Проверить обновления» в Настройках на месте;
  *   2. Клик при релизе, равном текущей версии → тихо уходит в SW-ветку
- *      (в dev — «проверять нечего»);
+ *      (в dev — «проверять нечего»), мастер обновления НЕ показывается;
  *   3. Ссылка «Открыть панель обновлений» без нового релиза НЕ показывается;
- *   4. Версия в Настройках — v1.0.58;
+ *   4. Версия в Настройках — v1.0.59;
  *   5. Повторный клик не ломает UI (статус снова показывается);
- *   6. Релиз НОВЕЕ (v1.0.99) → оранжевый статус «Доступна версия 1.0.99»
- *      и ссылка «Открыть панель обновлений» → /update/ в новой вкладке;
- *   7. Релиз равен текущей → статус «проверять нечего», ссылки нет;
+ *   6. Релиз НОВЕЕ (v1.0.99) → оранжевый статус «Доступна версия 1.0.99»,
+ *      мастер самообновления: /update/ на localhost нет → честная инструкция
+ *      + прямая ссылка на кит (releases/latest/download) + «Проверить снова»,
+ *      ссылка «Открыть панель обновлений» → /update/ в новой вкладке;
+ *   7. Релиз равен текущей → статус «проверять нечего», мастера нет;
  *   8. Репозиторий недоступен (404 — приватный) → молча, без ошибок в UI.
  */
 const { chromium } = require("playwright");
@@ -130,20 +132,22 @@ async function openSettings(page) {
   ok(await btn.isVisible(), "кнопка «Проверить обновления» видна в Настройках");
 
   // 2. Клик при релизе, равном текущей версии → SW-ветка (в dev — «проверять нечего»)
-  await mockRelease("v1.0.58");
+  await mockRelease("v1.0.59");
   await btn.click();
   const st0 = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(st0),
     `релиз = текущей версии → честный статус (${st0.trim().slice(0, 60)}…)`);
   ok(!st0.includes("undefined") && !st0.includes("NaN"), "в статусе нет undefined/NaN");
 
-  // 3. Ссылки на панель без нового релиза быть не должно
+  // 3. Мастер обновления и ссылки на панель без нового релиза быть не должно
   ok((await page.locator('[data-testid="updates-panel-link"]').count()) === 0,
     "ссылка «Открыть панель обновлений» скрыта (релиз не новее)");
+  ok((await page.locator('[data-testid="update-wizard"]').count()) === 0,
+    "мастер самообновления скрыт (релиз не новее)");
 
   // 4. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.58"), `в Настройках версия 1.0.58 (${ver.trim()})`);
+  ok(ver.includes("1.0.59"), `в Настройках версия 1.0.59 (${ver.trim()})`);
 
   // 5. Повторный клик — UI жив
   await btn.click();
@@ -152,13 +156,29 @@ async function openSettings(page) {
     "повторная проверка не ломает UI");
   await unmock();
 
-  // 6. Релиз новее → статус «Доступна версия 1.0.99» + ссылка на /update/ (новая вкладка)
-  //    (RU и EN: headless-браузер открывает сайт в en-локали)
+  // 6. Релиз новее → статус «Доступна версия 1.0.99» + мастер самообновления:
+  //    панель /update на localhost отсутствует → инструкция + прямая ссылка на кит
   await mockRelease("v1.0.99");
   await btn.click();
   const stA = await waitStatus(/Доступна версия 1\.0\.99|Version 1\.0\.99 is available/);
   ok(/Доступна версия 1\.0\.99|Version 1\.0\.99 is available/.test(stA),
     `релиз новее → статус с новой версией (${stA.trim().slice(0, 55)}…)`);
+  const wizard = page.locator('[data-testid="update-wizard"]');
+  ok((await wizard.count()) === 1, "мастер самообновления показан");
+  const kit = page.locator('[data-testid="upd-kit-link"]');
+  try {
+    await kit.waitFor({ state: "visible", timeout: 9000 });
+    ok(true, "мастер: панель не найдена → инструкция с ссылкой на кит (прозвивание завершилось)");
+  } catch {
+    ok(false, "мастер: ссылка на кит не появилась за 9 с (пробing завис?)");
+  }
+  if ((await kit.count()) === 1) {
+    const khref = (await kit.getAttribute("href")) ?? "";
+    ok(khref === "https://github.com/Sayikoro/https-mxw01.online/releases/latest/download/mxw01-deploy-kit.zip",
+      `прямая ссылка на кит с releases/latest/download (${khref})`);
+  }
+  ok((await page.locator('[data-testid="upd-reprobe"]').count()) === 1,
+    "кнопка «Проверить снова» на месте");
   const link = page.locator('[data-testid="updates-panel-link"]');
   ok((await link.count()) === 1 && (await link.isVisible()),
     "ссылка «Открыть панель обновлений» показана");
@@ -172,14 +192,15 @@ async function openSettings(page) {
   }
   await unmock();
 
-  // 7. Релиз снова равен текущей → статус «проверять нечего», ссылки нет
-  await mockRelease("v1.0.58");
+  // 7. Релиз снова равен текущей → статус «проверять нечего», мастера нет
+  await mockRelease("v1.0.59");
   await btn.click();
   const stB = await waitStatus(/проверять нечего|nothing to check|последнюю версию|latest version/i);
   ok(/проверять нечего|nothing to check|последнюю версию|latest version/i.test(stB) && !stB.includes("1.0.99"),
     "после отката релиза статус вернулся к обычному");
-  ok((await page.locator('[data-testid="updates-panel-link"]').count()) === 0,
-    "ссылка на панель снова скрыта");
+  ok((await page.locator('[data-testid="updates-panel-link"]').count()) === 0 &&
+     (await page.locator('[data-testid="update-wizard"]').count()) === 0,
+    "мастер и ссылка на панель снова скрыты");
   await unmock();
 
   // 8. Репозиторий недоступен (404 — приватный) → молча, без ошибки в UI

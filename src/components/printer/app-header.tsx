@@ -62,8 +62,10 @@ import {
   Bluetooth,
   BluetoothOff,
   Check,
+  CheckCircle2,
   ChevronDown,
   DatabaseBackup,
+  Download,
   ExternalLink,
   FileCheck2,
   HardDriveDownload,
@@ -326,6 +328,29 @@ function TransportSelect({
 
 type UpdatesState = "idle" | "checking" | "ok" | "ready" | "new" | "dev" | "fail";
 
+/* Мастер самообновления (v1.0.59): состояние панели /update на хостинге */
+type PanelState = "unknown" | "probing" | "ready" | "setup" | "old" | "missing";
+type UpdPhase = "idle" | "auth" | "installing" | "done";
+
+/* Панель с Git-кнопкой (git_install) появилась в 1.0.58 — это минимальная
+   версия, которой мастер доверяет установку */
+const PANEL_MIN_VERSION = "1.0.58";
+/* Пароль панели обновлений хранится ТОЛЬКО по явной галочке «запомнить»
+   и только в этом браузере; в UI никогда не показывается */
+const PANEL_PASS_KEY = "mxw01.updpass";
+
+/** CSRF-токен панели из скрытого поля формы */
+function extractCsrf(html: string): string | null {
+  const m = html.match(/name="csrf" value="([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+/** Flash-сообщение панели (POST → redirect → GET) */
+function extractFlash(html: string): { kind: "ok" | "err"; text: string } | null {
+  const m = html.match(/class="flash (ok|err)">([^<]*)</);
+  return m ? { kind: m[1] as "ok" | "err", text: m[2] } : null;
+}
+
 /** Сравнение версий по числовым сегментам: "1.2.10" > "1.2.9" */
 function isNewerVersion(candidate: string, current: string): boolean {
   const a = candidate.split(".").map((s) => parseInt(s, 10) || 0);
@@ -384,6 +409,14 @@ export function AppHeader({
   const [updates, setUpdates] = useState<UpdatesState>("idle");
   /* Версия, найденная на GitHub (состояние "new") */
   const [newVer, setNewVer] = useState("");
+  /* Мастер самообновления: состояние панели /update и фазы установки */
+  const [panel, setPanel] = useState<PanelState>("unknown");
+  const [updPhase, setUpdPhase] = useState<UpdPhase>("idle");
+  const [updMsg, setUpdMsg] = useState("");
+  const [panelPass, setPanelPass] = useState("");
+  const [panelPass2, setPanelPass2] = useState("");
+  const [rememberPass, setRememberPass] = useState(true);
+  const [needPass, setNeedPass] = useState(false);
   const [resetArmed, setResetArmed] = useState(false);
 
   /* Тема: класс на <html> уже ставит инлайн-скрипт до отрисовки; эффект
@@ -540,12 +573,13 @@ export function AppHeader({
     }
   };
 
-  /* «Проверить обновления» (v1.0.57): (1) спрашивает releases/latest у
-     GitHub-репозитория проекта (GITHUB_REPO в src/lib/printer/site.ts) —
-     если релиз новее установленной версии, показывает её и ссылку на
-     панель /update (кит ставит только панель, сайт сам файлы не меняет);
-     (2) затем обновляет service worker и сразу применяет новую версию
-     с перезагрузкой (SW ставит skipWaiting при install).
+  /* «Проверить обновления» (v1.0.57, мастер с v1.0.59): (1) спрашивает
+     releases/latest у GitHub-репозитория проекта (GITHUB_REPO в
+     src/lib/printer/site.ts) — если релиз новее установленной версии,
+     переходим в состояние "new": дальше подключается мастер самообновления
+     (проверяет панель /update на хостинге и ставит обновление сам);
+     (2) если релиза нет — обновляет service worker и сразу применяет новую
+     версию с перезагрузкой (SW ставит skipWaiting при install).
      Без PWA (dev-режим, офлайн-копия) — честное сообщение. */
   const handleCheckUpdates = async () => {
     setUpdates("checking");
@@ -586,6 +620,120 @@ export function AppHeader({
       setTimeout(() => window.location.reload(), 1200);
     } catch {
       setUpdates("fail");
+    }
+  };
+
+  /* ------- Мастер самообновления (v1.0.59): сайт ставит обновление сам ------- */
+
+  /** Опрос панели /update: готова ли к Git-обновлению (по версии в футере) */
+  const probePanel = async (): Promise<{ state: PanelState; html: string }> => {
+    let html = "";
+    try {
+      const res = await fetch("/update/", { cache: "no-store" });
+      html = res.ok ? await res.text() : "";
+    } catch {
+      html = "";
+    }
+    if (!html) return { state: "missing", html: "" };
+    if (/name="action" value="setup"/.test(html)) return { state: "setup", html };
+    const vm = html.match(/MXW01 updater v([0-9.]+)/);
+    if (vm && !isNewerVersion(PANEL_MIN_VERSION, vm[1])) return { state: "ready", html };
+    return { state: "old", html };
+  };
+
+  /** Повторный опрос панели (кнопка «Проверить снова») */
+  const reprobePanel = async () => {
+    setPanel("probing");
+    setUpdMsg("");
+    const r = await probePanel();
+    setPanel(r.state);
+    setNeedPass(r.state === "ready" && /name="action" value="login"/.test(r.html));
+  };
+
+  /* Появился новый релиз → сразу опрашиваем панель и подтягиваем
+     запомненный пароль (он никогда не показывается в UI) */
+  useEffect(() => {
+    if (updates !== "new") return;
+    let dead = false;
+    setPanel("probing");
+    setUpdPhase("idle");
+    setUpdMsg("");
+    const run = async () => {
+      try {
+        const p = localStorage.getItem(PANEL_PASS_KEY);
+        if (p && !dead) setPanelPass(p);
+      } catch { /* приватный режим */ }
+      const r = await probePanel();
+      if (dead) return;
+      setPanel(r.state);
+      setNeedPass(/name="action" value="login"/.test(r.html));
+    };
+    void run();
+    return () => {
+      dead = true;
+    };
+  }, [updates]);
+
+  /** POST-форма в панель (fetch следует за redirect — возвращается HTML со flash) */
+  const postPanelForm = async (data: Record<string, string>): Promise<string> => {
+    const res = await fetch("/update/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(data).toString(),
+      cache: "no-store",
+    });
+    return res.text();
+  };
+
+  /** Самообновление: вход в панель → git_install (кит с GitHub → копия → установка) */
+  const runSelfUpdate = async () => {
+    setUpdMsg("");
+    try {
+      /* 1. Свежая страница панели: CSRF + какая форма перед нами */
+      setUpdPhase("auth");
+      const res = await fetch("/update/", { cache: "no-store" });
+      if (!res.ok) throw new Error(t("set.updPanelMissing"));
+      let html = await res.text();
+      let csrf = extractCsrf(html);
+      if (!csrf) throw new Error(t("set.updPanelOld"));
+      /* 1а. Панель ещё без пароля — создаём его прямо из мастера */
+      if (/name="action" value="setup"/.test(html)) {
+        if (panelPass.length < 6) throw new Error(t("set.updPassShort"));
+        if (panelPass !== panelPass2) throw new Error(t("set.updPassMismatch"));
+        html = await postPanelForm({ csrf, action: "setup", password: panelPass, password2: panelPass2 });
+        csrf = extractCsrf(html) ?? csrf;
+      }
+      /* 1б. Вход по паролю (если панель его спрашивает) */
+      if (/name="action" value="login"/.test(html)) {
+        html = await postPanelForm({ csrf, action: "login", password: panelPass });
+        const fl = extractFlash(html);
+        if ((fl && fl.kind === "err") || /name="action" value="login"/.test(html)) {
+          throw new Error(t("set.updWrongPass"));
+        }
+        csrf = extractCsrf(html) ?? csrf;
+      }
+      /* 2. Установка одной кнопкой: кит с GitHub → резервная копия → распаковка */
+      setUpdPhase("installing");
+      try {
+        if (rememberPass && panelPass) localStorage.setItem(PANEL_PASS_KEY, panelPass);
+        if (!rememberPass) localStorage.removeItem(PANEL_PASS_KEY);
+      } catch { /* приватный режим */ }
+      html = await postPanelForm({ csrf, action: "git_install" });
+      const fl2 = extractFlash(html);
+      if (fl2 && fl2.kind === "err") throw new Error(fl2.text);
+      if (!(fl2 && fl2.kind === "ok" && fl2.text.includes("Обновлено с GitHub"))) {
+        throw new Error(t("set.updNoConfirm"));
+      }
+      /* 3. Готово: подтягиваем новый service worker и перезагружаемся */
+      setUpdPhase("done");
+      try {
+        const reg = await navigator.serviceWorker?.getRegistration();
+        if (reg) await reg.update();
+      } catch { /* не PWA — просто перезагрузка */ }
+      setTimeout(() => window.location.reload(), 1800);
+    } catch (e) {
+      setUpdPhase("idle");
+      setUpdMsg((e as Error)?.message || t("set.updatesFail"));
     }
   };
 
@@ -1255,6 +1403,126 @@ export function AppHeader({
                                 : "set.updatesFail"
                         )}
                   </p>
+                )}
+                {/* Мастер самообновления (v1.0.59): ставит обновление сам через панель /update */}
+                {updates === "new" && (
+                  <div
+                    data-testid="update-wizard"
+                    className="space-y-2 rounded-lg border border-orange-500/30 bg-orange-500/5 p-2.5"
+                  >
+                    {panel === "probing" || panel === "unknown" ? (
+                      <p className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {t("set.updProbing")}
+                      </p>
+                    ) : panel === "ready" || panel === "setup" ? (
+                      <>
+                        {panel === "setup" && (
+                          <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                            {t("set.updSetupHint")}
+                          </p>
+                        )}
+                        {(needPass || panel === "setup") && (
+                          <div className="space-y-1.5">
+                            <input
+                              data-testid="upd-pass"
+                              type="password"
+                              value={panelPass}
+                              onChange={(e) => setPanelPass(e.target.value)}
+                              placeholder={t("set.updPass")}
+                              autoComplete="off"
+                              className="h-7 w-full rounded-md border border-slate-300 bg-white px-2 text-xs outline-none focus:border-orange-400 dark:border-slate-600 dark:bg-slate-900"
+                            />
+                            {panel === "setup" && (
+                              <input
+                                data-testid="upd-pass2"
+                                type="password"
+                                value={panelPass2}
+                                onChange={(e) => setPanelPass2(e.target.value)}
+                                placeholder={t("set.updPass2")}
+                                autoComplete="off"
+                                className="h-7 w-full rounded-md border border-slate-300 bg-white px-2 text-xs outline-none focus:border-orange-400 dark:border-slate-600 dark:bg-slate-900"
+                              />
+                            )}
+                            {panel === "ready" && (
+                              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                <input
+                                  type="checkbox"
+                                  checked={rememberPass}
+                                  onChange={(e) => setRememberPass(e.target.checked)}
+                                  className="h-3 w-3 accent-orange-500"
+                                />
+                                {t("set.updRemember")}
+                              </label>
+                            )}
+                          </div>
+                        )}
+                        {updPhase !== "done" && (
+                          <Button
+                            data-testid="upd-install"
+                            size="sm"
+                            className="h-7 w-full gap-1.5 rounded-lg text-xs font-semibold"
+                            disabled={updPhase === "auth" || updPhase === "installing"}
+                            onClick={() => void runSelfUpdate()}
+                          >
+                            {updPhase === "auth" || updPhase === "installing" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Download className="h-3.5 w-3.5" />
+                            )}
+                            {updPhase === "auth"
+                              ? t("set.updPhaseLogin")
+                              : updPhase === "installing"
+                                ? t("set.updPhaseInstall")
+                                : t("set.updInstall", { ver: newVer })}
+                          </Button>
+                        )}
+                        {updPhase === "done" && (
+                          <p
+                            data-testid="upd-done"
+                            className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            {t("set.updPhaseDone")}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                          {panel === "missing" ? t("set.updPanelMissing") : t("set.updPanelOld")}
+                        </p>
+                        <a
+                          data-testid="upd-kit-link"
+                          href={`https://github.com/${GITHUB_REPO}/releases/latest/download/mxw01-deploy-kit.zip`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-orange-600 hover:underline dark:text-orange-400"
+                        >
+                          <Download className="h-3 w-3" />
+                          {t("set.updKitLink")}
+                        </a>
+                        <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                          {t("set.updPanelHow")}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid="upd-reprobe"
+                          className="h-7 gap-1.5 rounded-lg text-xs font-medium"
+                          onClick={() => void reprobePanel()}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          {t("set.updReprobe")}
+                        </Button>
+                      </>
+                    )}
+                    {updMsg && (
+                      <p data-testid="upd-error" className="text-[11px] leading-relaxed text-red-500">
+                        {updMsg}
+                      </p>
+                    )}
+                  </div>
                 )}
                 {updates === "new" && (
                   <a

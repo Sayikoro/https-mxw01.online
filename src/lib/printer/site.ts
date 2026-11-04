@@ -9,7 +9,7 @@
 export const SITE_URL: string = "https://mxw01.online";
 
 /** Версия приложения — показывается в «Настройках» рядом с историей версий */
-export const APP_VERSION = "1.0.58";
+export const APP_VERSION = "1.0.59";
 
 /**
  * GitHub-репозиторий проекта для кнопки «Проверить обновления»

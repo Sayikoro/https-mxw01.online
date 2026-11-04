@@ -7,7 +7,7 @@
  * Кейсы:
  *   1. В Настройках видна ссылка «Разработчик» на https://t.me/The_Sovereign_o_f_Dawn
  *      (target=_blank, иконка, подпись локализована RU/EN);
- *   2. Версия в Настройках — v1.0.58;
+ *   2. Версия в Настройках — v1.0.59;
  *   3. Телеметрия: на /admin/hit.php ушёл POST с JSON (type=page, vid, p)
  *      — navigator.sendBeacon перехватывается как request POST;
  *   4. Ссылка открывает адрес Telegram в новой вкладке (проверка href/target);
@@ -113,7 +113,7 @@ async function openSettings(page) {
 
   // 2. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.58"), `в Настройках версия 1.0.58 (${ver.trim()})`);
+  ok(ver.includes("1.0.59"), `в Настройках версия 1.0.59 (${ver.trim()})`);
 
   // 3. Телеметрия: page-хит ушёл на /admin/hit.php
   await page.waitForTimeout(1200);
