@@ -136,6 +136,13 @@ const KNOWN_PROFILES: KnownProfile[] = [
     service: 0xae00,
     writes: [0xae01, 0xae10],
   },
+  {
+    // v1.0.61: AB00 — сервис «котиковых» принтеров (MX10, порт thermy),
+    // пишем в AB01; добавлен ПЕРЕД общим поиском
+    name: "AB00 (MX10/cat)",
+    service: 0xab00,
+    writes: [0xab01],
+  },
 ];
 
 /**
@@ -148,6 +155,7 @@ export const HPRT_OPTIONAL_SERVICES: (string | number)[] = [
   0xffe0,
   0xffe5,
   0xae00,
+  0xab00, // v1.0.61: MX10/cat (thermy)
   MICROCHIP_SERVICE,
   NORDIC_SERVICE,
   0x1800, // Generic Access (имя устройства)

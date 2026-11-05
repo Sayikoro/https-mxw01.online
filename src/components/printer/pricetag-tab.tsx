@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePrinter } from "@/lib/printer/printer-context";
 import { useUsbPrinter } from "@/lib/printer/usb/usb-printer-context";
 import { useHprtPrinter } from "@/lib/printer/hprt/hprt-printer-context";
+import { useCatPrinter } from "@/lib/printer/cat/cat-printer-context";
 import {
   FONT_OPTIONS,
   createId,
@@ -194,6 +195,8 @@ export function PricetagTab({ t, lang }: { t: Translator; lang: Lang }) {
   const { status, printCanvas, connect } = usePrinter();
   const { transport, printCanvas: printUsb } = useUsbPrinter();
   const { printCanvas: printHprt } = useHprtPrinter();
+  // v1.0.61: MX10 (cat-протокол) — третий не-BLE транспорт печати
+  const { printCanvas: printCat } = useCatPrinter();
   const { toast } = useToast();
 
   const [tags, setTags] = useState<Pricetag[]>([]);
@@ -488,7 +491,7 @@ export function PricetagTab({ t, lang }: { t: Translator; lang: Lang }) {
         const canvas = document.createElement("canvas");
         renderPricetagTapeToCanvas(canvas, tags, style, { minHeightPx });
         const combined = renderCopies(canvas, copies);
-        await (transport === "usb" ? printUsb : printHprt)(combined);
+        await (transport === "usb" ? printUsb : transport === "cat" ? printCat : printHprt)(combined);
         notePrintedMm(combined.height / PX_PER_MM);
         const noun = plural(lang, tags.length, [t("pt.nounOne"), t("pt.nounFew"), t("pt.nounMany")], [t("pt.nounOne"), t("pt.nounMany")]);
         setBanner(t("pt.bannerTape", { n: tags.length, noun }));
@@ -538,7 +541,7 @@ export function PricetagTab({ t, lang }: { t: Translator; lang: Lang }) {
     } finally {
       setPrinting(false);
     }
-  }, [connect, printCanvas, copies, status, tags, style, minHeightPx, toast, t, lang, transport, printUsb, printHprt]);
+  }, [connect, printCanvas, copies, status, tags, style, minHeightPx, toast, t, lang, transport, printUsb, printHprt, printCat]);
 
   const activeIndex = tags.findIndex((t) => t.id === activeId);
 

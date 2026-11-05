@@ -30,6 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePrinter } from "@/lib/printer/printer-context";
 import { useUsbPrinter } from "@/lib/printer/usb/usb-printer-context";
 import { useHprtPrinter } from "@/lib/printer/hprt/hprt-printer-context";
+import { useCatPrinter } from "@/lib/printer/cat/cat-printer-context";
 import {
   DIVIDER_STYLES,
   FONT_OPTIONS,
@@ -612,6 +613,8 @@ export function TapeTab({ t, lang }: { t: Translator; lang: Lang }) {
   const { status, printCanvas, connect } = usePrinter();
   const { transport, printCanvas: printUsb } = useUsbPrinter();
   const { printCanvas: printHprt } = useHprtPrinter();
+  // v1.0.61: MX10 (cat-протокол) — третий не-BLE транспорт печати
+  const { printCanvas: printCat } = useCatPrinter();
   const { toast } = useToast();
 
   // Перевод/локаль для генераторов: передаются в раскладку и рендер печати
@@ -1311,7 +1314,7 @@ export function TapeTab({ t, lang }: { t: Translator; lang: Lang }) {
           const canvas = document.createElement("canvas");
           renderTapePage(canvas, page, tapeI18n);
           const combined = renderCopies(canvas, copies);
-          await (transport === "usb" ? printUsb : printHprt)(combined);
+          await (transport === "usb" ? printUsb : transport === "cat" ? printCat : printHprt)(combined);
           notePrintedMm(combined.height / PX_PER_MM);
         }
         setBanner(t("tape.sentToPrint", { n: pages.length }));
@@ -1371,7 +1374,7 @@ export function TapeTab({ t, lang }: { t: Translator; lang: Lang }) {
     } finally {
       setPrinting(false);
     }
-  }, [connect, items, printCanvas, copies, status, toast, t, fixedPageHeight, tapeI18n, transport, printUsb, printHprt]);
+  }, [connect, items, printCanvas, copies, status, toast, t, fixedPageHeight, tapeI18n, transport, printUsb, printHprt, printCat]);
 
   /** Сохранить страницу картинкой (v1.0.27): PNG в полном качестве 4×.
    *  Имя файла mxw01-page-N-ГГГГММДД-ЧЧММСС.png; после скачивания — тост

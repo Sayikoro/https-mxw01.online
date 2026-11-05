@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PrinterProvider, usePrinter } from "@/lib/printer/printer-context";
 import { UsbPrinterProvider } from "@/lib/printer/usb/usb-printer-context";
 import { HprtPrinterProvider } from "@/lib/printer/hprt/hprt-printer-context";
+import { CatPrinterProvider } from "@/lib/printer/cat/cat-printer-context";
 import { I18nProvider, useI18n } from "@/lib/printer/i18n";
 import type { Lang, Translator } from "@/lib/printer/i18n";
 import { AppHeader } from "@/components/printer/app-header";
@@ -127,14 +128,16 @@ function AppRoot() {
     <PrinterProvider t={t}>
       <UsbPrinterProvider t={t}>
         <HprtPrinterProvider t={t}>
-          <div className="flex min-h-dvh flex-col bg-white dark:bg-slate-900 md:h-dvh md:overflow-hidden">
-            <SupportBanner t={t} />
-            <AppHeader t={t} lang={lang} setLang={setLang} />
-            <PrinterTabs t={t} lang={lang} />
-          </div>
-          <AppFooter t={t} />
-          <CookieBanner t={t} />
-          <InstallPrompt t={t} />
+          <CatPrinterProvider t={t}>
+            <div className="flex min-h-dvh flex-col bg-white dark:bg-slate-900 md:h-dvh md:overflow-hidden">
+              <SupportBanner t={t} />
+              <AppHeader t={t} lang={lang} setLang={setLang} />
+              <PrinterTabs t={t} lang={lang} />
+            </div>
+            <AppFooter t={t} />
+            <CookieBanner t={t} />
+            <InstallPrompt t={t} />
+          </CatPrinterProvider>
         </HprtPrinterProvider>
       </UsbPrinterProvider>
     </PrinterProvider>

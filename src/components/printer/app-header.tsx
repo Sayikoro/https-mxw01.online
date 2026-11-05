@@ -3,8 +3,9 @@
  * Шапка приложения: логотип и название, выпадающий список типа принтера
  * рядом с кнопкой подключения (v1.0.35), статус принтера и «Настройки»:
  *  • тип принтера: Bluetooth (MXW01) / HPRT — BT-этикетки (v1.0.55) /
+ *    MX10 — cat-протокол (v1.0.61, оранжевый) /
  *    POS-USB (ESC/POS) — кнопка «Подключить» меняет иконку и цвет
- *    (зелёный / фиолетовый / синий); у HPRT — настройки носителя
+ *    (зелёный / фиолетовый / оранжевый / синий); у HPRT — настройки носителя
  *    (linerless/gap) и «Диагностика Bluetooth» (raw-консоль, сервисы GATT);
  *  • язык (компактные бейджи RU/EN) и «Сохранить офлайн-версию»;
  *  • тема: светлая / тёмная / системная;
@@ -36,6 +37,7 @@ import { usePrinter } from "@/lib/printer/printer-context";
 import { plural } from "@/lib/printer/i18n";
 import { useUsbPrinter } from "@/lib/printer/usb/usb-printer-context";
 import { useHprtPrinter } from "@/lib/printer/hprt/hprt-printer-context";
+import { useCatPrinter } from "@/lib/printer/cat/cat-printer-context";
 import { usbPosHeadDots, USB_POS_MAX_PRINT_MM } from "@/lib/printer/usb/raster";
 import { useTheme, applyTheme } from "@/lib/printer/theme";
 import type { ThemeSetting } from "@/lib/printer/theme";
@@ -61,6 +63,7 @@ import {
   BluetoothConnected,
   Bluetooth,
   BluetoothOff,
+  Cat,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -136,9 +139,10 @@ function ChoiceBadge({
 
 /**
  * Выпадающий список типа принтера (v1.0.35): Bluetooth (MXW01), HPRT —
- * BT-этикетки (v1.0.55) или POS-USB (ESC/POS). Выбор меняет транспорт
- * печати (mxw01-transport); кнопка «Подключить» рядом подстраивает иконку
- * и цвет: BT — зелёная, HPRT — фиолетовая, POS — синяя. В браузерах без
+ * BT-этикетки (v1.0.55), MX10 — cat-протокол (v1.0.61) или POS-USB
+ * (ESC/POS). Выбор меняет транспорт печати (mxw01-transport); кнопка
+ * «Подключить» рядом подстраивает иконку и цвет: BT — зелёная, HPRT —
+ * фиолетовая, MX10 (cat) — оранжевая, POS — синяя. В браузерах без
  * WebUSB вариант POS-USB недоступен. У HPRT в подвале списка — вход в
  * «Диагностику Bluetooth» (подбор GATT-профиля под реальный принтер).
  * - Экспериментальный POS (v1.0.48): тип «POS-USB» виден ТОЛЬКО при
@@ -177,7 +181,7 @@ function TransportSelect({
   }, [open]);
 
   const options: {
-    value: "ble" | "usb" | "hprt";
+    value: "ble" | "usb" | "hprt" | "cat";
     icon: React.ReactNode;
     label: string;
     desc: string;
@@ -197,6 +201,15 @@ function TransportSelect({
       icon: <Printer className="h-4 w-4" />,
       label: t("dock.typeHprt"),
       desc: t("dock.typeHprtDesc"),
+      disabled: false,
+    },
+    // - MX10 (v1.0.61): «котиковый» cat-протокол (порт thermy) —
+    //   MX10/MX*/GB03 и родственные дешёвые принтеры -
+    {
+      value: "cat",
+      icon: <Cat className="h-4 w-4" />,
+      label: t("dock.typeCat"),
+      desc: t("dock.typeCatDesc"),
       disabled: false,
     },
     // - POS скрыт за экспериментальным флагом: без свитча в Настройках
@@ -234,7 +247,9 @@ function TransportSelect({
               ? "text-blue-600 dark:text-blue-400"
               : usb.transport === "hprt"
                 ? "text-violet-600 dark:text-violet-400"
-                : "text-green-600 dark:text-green-400"
+                : usb.transport === "cat"
+                  ? "text-orange-600 dark:text-orange-400"
+                  : "text-green-600 dark:text-green-400"
           )}
         >
           {current.icon}
@@ -378,6 +393,7 @@ export function AppHeader({
     usePrinter();
   const usb = useUsbPrinter();
   const hprt = useHprtPrinter();
+  const cat = useCatPrinter();
   const { posEnabled, setPosEnabled: writePosFlag } = usePosFlag();
   const { theme, setTheme } = useTheme();
   const { quality, setPreviewQuality } = usePreviewQuality();
@@ -498,6 +514,19 @@ export function AppHeader({
       } catch (e) {
         toast({
           title: (e as Error)?.message ?? t("hprt.err.connectFailed"),
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    // - MX10 (v1.0.61): cat-протокол по Bluetooth, свой контекст -
+    if (usb.transport === "cat") {
+      if (!cat.supported || cat.status === "connecting") return;
+      try {
+        await cat.connect();
+      } catch (e) {
+        toast({
+          title: (e as Error)?.message ?? t("cat.err.connectFailed"),
           variant: "destructive",
         });
       }
@@ -773,6 +802,9 @@ export function AppHeader({
   const usbConnected = usb.transport === "usb" && usb.hasDevice;
   const hprtConnected =
     usb.transport === "hprt" && (hprt.status === "connected" || hprt.status === "printing");
+  // - MX10 (v1.0.61): свой чип статуса в оранжевой гамме -
+  const catConnected =
+    usb.transport === "cat" && (cat.status === "connected" || cat.status === "printing");
 
   const themeOptions: { value: ThemeSetting; label: string; icon: React.ReactNode }[] = [
     { value: "light", label: t("set.themeLight"), icon: <Sun className="h-3.5 w-3.5" /> },
@@ -864,27 +896,51 @@ export function AppHeader({
                 <X className="h-4 w-4" />
               </Button>
             </>
+          ) : catConnected ? (
+            <>
+              <span
+                className="flex h-7 min-w-0 items-center gap-1.5 rounded-full bg-orange-600 px-3 text-xs font-semibold text-white shadow-sm shadow-orange-600/30"
+                title={cat.deviceName ?? ""}
+              >
+                <Cat className="h-3.5 w-3.5 shrink-0" />
+                <span className="max-w-[140px] truncate">{cat.deviceName}</span>
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                title={t("header.disconnect")}
+                onClick={() => void cat.disconnect()}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </>
           ) : (
             <Button
               onClick={handleConnectClick}
               disabled={
                 connecting ||
                 (usb.transport === "usb" && (usb.connecting || !usb.supported)) ||
-                (usb.transport === "hprt" && (hprt.status === "connecting" || !hprt.supported))
+                (usb.transport === "hprt" && (hprt.status === "connecting" || !hprt.supported)) ||
+                (usb.transport === "cat" && (cat.status === "connecting" || !cat.supported))
               }
               data-testid={
                 usb.transport === "usb"
                   ? "usb-connect"
                   : usb.transport === "hprt"
                     ? "hprt-connect"
-                    : undefined
+                    : usb.transport === "cat"
+                      ? "cat-connect"
+                      : undefined
               }
               title={
                 usb.transport === "usb" && !usb.supported
                   ? t("usb.unsupported")
                   : usb.transport === "hprt" && !hprt.supported
                     ? t("hprt.unsupported")
-                    : undefined
+                    : usb.transport === "cat" && !cat.supported
+                      ? t("cat.unsupported")
+                      : undefined
               }
               className={cn(
                 "h-8 gap-1.5 rounded-full px-3.5 text-xs font-medium text-white shadow-sm",
@@ -892,15 +948,19 @@ export function AppHeader({
                   ? "bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700"
                   : usb.transport === "hprt"
                     ? "bg-violet-600 hover:bg-violet-700 dark:bg-violet-600 dark:hover:bg-violet-700"
-                    : "bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700"
+                    : usb.transport === "cat"
+                      ? "bg-orange-600 hover:bg-orange-700 dark:bg-orange-600 dark:hover:bg-orange-700"
+                      : "bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700"
               )}
             >
-              {connecting || usb.connecting || hprt.status === "connecting" ? (
+              {connecting || usb.connecting || hprt.status === "connecting" || cat.status === "connecting" ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : usb.transport === "usb" ? (
                 <Usb className="h-3.5 w-3.5" />
               ) : usb.transport === "hprt" ? (
                 <Printer className="h-3.5 w-3.5" />
+              ) : usb.transport === "cat" ? (
+                <Cat className="h-3.5 w-3.5" />
               ) : (
                 <Bluetooth className="h-3.5 w-3.5" />
               )}
@@ -912,9 +972,13 @@ export function AppHeader({
                   ? hprt.supported
                     ? t("header.connect")
                     : t("header.noBluetooth")
-                  : status === "unsupported"
-                    ? t("header.noBluetooth")
-                    : t("header.connect")}
+                  : usb.transport === "cat"
+                    ? cat.supported
+                      ? t("header.connect")
+                      : t("header.noBluetooth")
+                    : status === "unsupported"
+                      ? t("header.noBluetooth")
+                      : t("header.connect")}
             </Button>
           )}
 
@@ -1300,6 +1364,89 @@ export function AppHeader({
                 </Button>
                 <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
                   {t("set.hprtUsbHint")}
+                </p>
+              </div>
+
+              {/* — MX10 (v1.0.61): cat-протокол (порт thermy). Скорость и
+                  энергия — как в print_defaults thermy; диагностика — та же
+                  raw-консоль, что у HPRT — */}
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {t("set.catTitle")}
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-muted p-2.5">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                      {t("cat.speed")}
+                    </div>
+                    <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                      {t("cat.speedHint")}
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={127}
+                    value={cat.speed}
+                    data-testid="cat-speed"
+                    aria-label={t("cat.speed")}
+                    onChange={(e) => cat.setSpeed(Number(e.target.value))}
+                    className={NUM_CLS}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-muted p-2.5">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                      {t("cat.energy")}
+                    </div>
+                    <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                      {t("cat.energyHint")}
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    min={1000}
+                    max={15000}
+                    step={250}
+                    value={cat.energy}
+                    data-testid="cat-energy"
+                    aria-label={t("cat.energy")}
+                    onChange={(e) => cat.setEnergy(Number(e.target.value))}
+                    className={NUM_CLS}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-lg bg-muted p-2.5">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                      {t("cat.extraFeed")}
+                    </div>
+                    <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                      {t("cat.extraFeedHint")}
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={cat.extraFeed}
+                    data-testid="cat-feed"
+                    aria-label={t("cat.extraFeed")}
+                    onChange={(e) => cat.setExtraFeed(Number(e.target.value))}
+                    className={NUM_CLS}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="cat-diagnostics-open"
+                  className="h-8 w-full gap-1.5 rounded-lg text-xs font-medium"
+                  onClick={() => setHprtDiagOpen(true)}
+                >
+                  <Cat className="h-3.5 w-3.5" />
+                  {t("set.catDiagnostics")}
+                </Button>
+                <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+                  {t("set.catHint")}
                 </p>
               </div>
 

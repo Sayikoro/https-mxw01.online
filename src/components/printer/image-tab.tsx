@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePrinter } from "@/lib/printer/printer-context";
 import { useUsbPrinter } from "@/lib/printer/usb/usb-printer-context";
 import { useHprtPrinter } from "@/lib/printer/hprt/hprt-printer-context";
+import { useCatPrinter } from "@/lib/printer/cat/cat-printer-context";
 import {
   applyImageSettings,
   autoTone,
@@ -69,6 +70,8 @@ export function ImageTab({ t, lang }: { t: Translator; lang: Lang }) {
   const { status, printCanvas, connect } = usePrinter();
   const { transport, printCanvas: printUsb } = useUsbPrinter();
   const { printCanvas: printHprt } = useHprtPrinter();
+  // v1.0.61: MX10 (cat-протокол) — третий не-BLE транспорт печати
+  const { printCanvas: printCat } = useCatPrinter();
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -177,7 +180,7 @@ export function ImageTab({ t, lang }: { t: Translator; lang: Lang }) {
       if (!usbPreview || !hasImage) return;
       setPrinting(true);
       try {
-        await (transport === "usb" ? printUsb : printHprt)(usbPreview);
+        await (transport === "usb" ? printUsb : transport === "cat" ? printCat : printHprt)(usbPreview);
         notePrintedMm(usbPreview.height / PX_PER_MM);
         toast({ title: t("it.printSent") });
       } catch (e) {
@@ -217,7 +220,7 @@ export function ImageTab({ t, lang }: { t: Translator; lang: Lang }) {
     } finally {
       setPrinting(false);
     }
-  }, [connect, hasImage, printCanvas, status, toast, t, transport, printUsb, printHprt]);
+  }, [connect, hasImage, printCanvas, status, toast, t, transport, printUsb, printHprt, printCat]);
 
   return (
     <Workspace>

@@ -9,7 +9,7 @@
  *      (target=_blank, иконка, подпись локализована RU/EN);
  *   1b. В ФУТЕРЕ (сторона пользователя, v1.0.60) видна та же ссылка —
  *      без открытия настроек, с иконкой и локализованной подписью;
- *   2. Версия в Настройках — v1.0.60;
+ *   2. Версия в Настройках — v1.0.61;
  *   3. Телеметрия: на /admin/hit.php ушёл POST с JSON (type=page, vid, p)
  *      — navigator.sendBeacon перехватывается как request POST;
  *   4. Ссылка открывает адрес Telegram в новой вкладке (проверка href/target);
@@ -130,7 +130,7 @@ async function openSettings(page) {
 
   // 2. Версия
   const ver = await page.locator('[data-testid="app-version"]').innerText();
-  ok(ver.includes("1.0.60"), `в Настройках версия 1.0.60 (${ver.trim()})`);
+  ok(ver.includes("1.0.61"), `в Настройках версия 1.0.61 (${ver.trim()})`);
 
   // 3. Телеметрия: page-хит ушёл на /admin/hit.php
   await page.waitForTimeout(1200);

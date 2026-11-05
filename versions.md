@@ -1,6 +1,6 @@
 # История изменений — MXW01 Web Terminal
 
-**Текущая версия: 1.0.60**
+**Текущая версия: 1.0.61**
 
 Правила нумерации: большое изменение увеличивает основную версию (0.1 → 0.2 → …), мелкие изменения группируются в подверсии (0.2.1, 0.2.2, …).
 
@@ -746,6 +746,18 @@
 - site.ts 1.0.59; public/sw.js → mxw01-pwa-v23.
 - Тесты: v156 расширен (мастер: при новом релизе и отсутствующей панели показывается инструкция + прямая ссылка на кит + «Проверить снова»; версии подняты до 1.0.59); test-php-update-git.sh 42/42, test-php-update.sh 27/27, test-admin.sh 46/46.
 - Правки: src/components/printer/app-header.tsx (мастер обновления), src/locales/ru.ts + en.ts (ключи set.upd*), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), scripts/v156-update-check.js, versions.md.
+
+### 1.0.61 — Поддержка MX10 (cat-протокол, порт thermy)
+
+- Новый транспорт печати «MX10 (cat)» (v-я иконка-котик, оранжевая кнопка подключения) рядом с Bluetooth (MXW01), HPRT и POS-USB. Портирован проверенный протокол «котиковых» принтеров из mazoqui/thermy (класс CatProtocol → порт cat-protocol.ts kitty-printer): поддерживаются MX10, MX*, GB03, GB01…04, M01, LY…, AI01, GT01, X6, C9 — у всех один кадр и одна растровая решётка.
+- Протокол (src/lib/printer/cat/cat-protocol.ts, чистый модуль без DOM): кадр `51 78 <cmd> <type> <len_lo> <len_hi> <payload> <crc8> ff`; CRC-8 poly 0x07 (MSB-first, init 0 — таблица генерируется, сверена с эталоном thermy и справочником «123456789» = 0xF4); команды A0–BE (BITMAP 0xa2, LATTICE 0xa6, SPEED 0xbd, ENERGY 0xaf, APPLY_ENERGY 0xbe…); prepare: state → сырой кадр камеры `51 78 bc 00 01 02 01 2d ff` → dpi(0x32) → speed → energy → apply → update → start_lattice; finish: end_lattice → speed(8) → feed → state. Растр: 384 точек (58 мм бумага), биты LSB-first, «1» = тёмный пиксель (порог 128 по Rec.709), узкий растр центрируется, широкий обжимается.
+- Транспорт BLE переиспользован от HPRT (HprtBleTransport): автопрофиль GATT по известным сервисам; в список добавлен AB00 → запись AB01 (MX10), рядом с уже покрытыми AE00→AE01 и FF00→FF02 — все три UUID-пары из thermy config.json.
+- Контекст (src/lib/printer/cat/cat-printer-context.tsx): подключение через системный выбор устройства, статус/чип в шапке (оранжевый, иконка котика), печать printCanvas — тот же ч/б конвейер, что у POS/HPRT (бинарный холст → ресемпл до 384 → обрезка пустых полей → задание целиком), прогресс отправки, журнал диагностики; настройки в localStorage (mxw01-cat-*): скорость (35), энергия (8000), прогон (50), чанк (180) и пауза (15 мс) — дефолты из print_defaults thermy.
+- UI: в списке типов принтера — «MX10 (cat)»; в Настройках — блок MX10 (скорость/энергия/прогон + вход в общую «Диагностику Bluetooth»); вкладки (лента, ценники, картинка) печатают через printCat при выбранном транспорте cat.
+- site.ts 1.0.61; public/sw.js → mxw01-pwa-v25.
+- Тесты: НОВЫЙ scripts/test-cat-protocol.ts (bun, 29 проверок: CRC-8 против справочника и эталонных кадров thermy — пауза/возобновление/пробник/камера, сборка prepare/finish с байт-в-байт сверкой payload решётки, RGBA→биты LSB-first/порог/центрирование, задание целиком); НОВЫЙ scripts/v160-mx10.js (Playwright: вариант «MX10 (cat)» в списке, cat-connect с ?nobt=1 честно задизейблена, блок настроек MX10, кламп скорости → localStorage, диагностика, возврат на BLE); регресс v156/v158/v159, tsc — 0 ошибок в src.
+- Правки: src/lib/printer/cat/* (новые), src/lib/printer/hprt/ble-transport.ts (профиль AB00 + optionalServices), src/lib/printer/usb/usb-printer-context.tsx (транспорт cat), src/components/printer/app-header.tsx, src/components/printer/image-tab.tsx, pricetag-tab.tsx, tape-builder.tsx, src/app/page.tsx, src/locales/ru.ts + en.ts (20 ключей), scripts/test-cat-protocol.ts, scripts/v160-mx10.js, versions.md.
+- Примечание: проверка на реальном MX10 не выполнялась (в песочнице нет BLE-железа) — протокол перенесён байт-в-байт из работающего thermy; если принтер молчит, в «Диагностике Bluetooth» видны сервисы и весь обмен.
 
 ### 1.0.60 — «Разработчик: @The_Sovereign_o_f_Dawn» на стороне пользователя (футер)
 

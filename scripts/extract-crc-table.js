@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * - извлечение CRC8-таблицы из npm-драйвера mxw01-thermal-printer в
  *   расширение: table берётся из dist/index.js БЕЗ ручного переписывания,

@@ -767,6 +767,8 @@ export const en: Record<string, string> = {
   // --- dock/diag: third transport — HPRT (BT labels, v1.0.55) ---
   "dock.typeHprt": "HPRT (BT labels)",
   "dock.typeHprtDesc": "T260LR labels over Bluetooth (TSPL)",
+  "dock.typeCat": "MX10 (cat)",
+  "dock.typeCatDesc": "MX10/MX*, GB03 and siblings over Bluetooth",
   "diag.hprtDriver": "Web Bluetooth (HprtBleTransport)",
   "diag.hprtTransport": "Web Bluetooth LE (GATT auto-profile)",
   "diag.hprtProfile": "GATT profile",
@@ -776,6 +778,9 @@ export const en: Record<string, string> = {
   "set.hprtMedia": "Media",
   "set.hprtDiagnostics": "Bluetooth diagnostics…",
   "set.hprtUsbHint": "USB-C on the T260LR is usually charging-only. If the printer shows up over cable, enable «POS support (Beta)» and try the POS-USB transport (TSPL, 384 dots).",
+  "set.catTitle": "MX10 (cat protocol)",
+  "set.catDiagnostics": "Bluetooth diagnostics…",
+  "set.catHint": "MX10 and sibling budget printers (MX*, GB03, GB01…04, M01, LY…, X6, C9) speak the cat protocol — a port of the proven thermy: 0x51 0x78 frames, 384-dot lattice. Diagnostics reuses the HPRT raw console.",
 
   // --- hprt: printing to HPRT over Bluetooth ---
   "hprt.unsupported": "Web Bluetooth is unavailable in this browser. You need Chrome, Edge, Opera or the beacio extension for Safari.",
@@ -794,6 +799,19 @@ export const en: Record<string, string> = {
   "hprt.err.notConnected": "Printer is not connected",
   "hprt.err.busy": "Printer is busy — wait for the current print to finish",
   "hprt.err.transferFailed": "Data transfer error",
+  "cat.unsupported": "Web Bluetooth is unavailable in this browser. You need Chrome, Edge, Opera or the beacio extension for Safari.",
+  "cat.speed": "Print speed",
+  "cat.speedHint": "thermy: 35 (lower is sharper)",
+  "cat.energy": "Energy",
+  "cat.energyHint": "thermy: 8000 (higher is darker)",
+  "cat.extraFeed": "Extra feed, dots",
+  "cat.extraFeedHint": "thermy: 50 — pull the paper out after printing",
+  "cat.err.cancelled": "No printer selected",
+  "cat.err.connectFailed": "Could not connect to the printer",
+  "cat.err.noProfile": "Printer connected, but no print GATT profile found — open Bluetooth diagnostics",
+  "cat.err.notConnected": "Printer is not connected",
+  "cat.err.busy": "Printer is busy — wait for the current print",
+  "cat.err.transferFailed": "Data transfer error",
 
   // --- hprt.diag: Bluetooth diagnostics ---
   "hprt.diag.title": "Bluetooth diagnostics",

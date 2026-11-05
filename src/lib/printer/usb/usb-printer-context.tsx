@@ -63,8 +63,9 @@ const DENSITY_KEY = "mxw01-usb-density";
 const DPI_KEY = "mxw01-usb-dpi";
 const MEDIA_KEY = "mxw01-usb-media";
 
-/** Транспорт печати: BLE (MXW01) | USB (POS, за флагом) | HPRT (BT-этикетки, v1.0.55) */
-export type PrintTransport = "ble" | "usb" | "hprt";
+/** Транспорт печати: BLE (MXW01) | USB (POS, за флагом) | HPRT (BT-этикетки,
+ *  v1.0.55) | cat (MX10 и родственные, v1.0.61) */
+export type PrintTransport = "ble" | "usb" | "hprt" | "cat";
 
 /** Язык команд USB-принтера: чековые — ESC/POS, этикеточные — TSPL */
 export type UsbPrintLang = "escpos" | "tspl";
@@ -200,7 +201,7 @@ export function UsbPrinterProvider({
     setSupported(hasUsb);
     try {
       const rawT = window.localStorage.getItem(TRANSPORT_KEY);
-      if (rawT === "ble" || rawT === "usb" || rawT === "hprt") setTransportState(rawT);
+      if (rawT === "ble" || rawT === "usb" || rawT === "hprt" || rawT === "cat") setTransportState(rawT);
       // - Экспериментальный POS (v1.0.48): флаг выключен — транспорт «usb»
       //   не восстанавливается; «hprt» (v1.0.55) — обычный транспорт,
       //   экспериментального флага не требует -

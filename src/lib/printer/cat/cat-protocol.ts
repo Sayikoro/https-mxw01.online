@@ -1,0 +1,263 @@
+/**
+ * ============================================================================
+ *  CAT-ПРОТОКОЛ — печать на MX10 и родственных «котиковых» принтерах.
+ * ============================================================================
+ *  Четвёртый транспорт печати (v1.0.61) рядом с BLE (MXW01), HPRT и POS-USB.
+ *  Портирован с проверенного Python-реализатора mazoqui/thermy (файл
+ *  thermy.py, классы CatProtocol/CatPrinter — те, в свою очередь, порт
+ *  cat-protocol.ts из проекта kitty-printer). Модельные имена: MX10, MX*,
+ *  GB03 и соседние («XW…», «JX…», «M01», «GB01…04», «LY…», «AI01», «GT01»,
+ *  «X6», «C9») — у всех один кадр и одна растровая решётка.
+ *
+ *  КАДР (transfer):
+ *      51 78 <cmd> <type> <len_lo> <len_hi> <payload…> <crc8(payload)> ff
+ *    type: 0 = transfer (мы шлём), 1 = response (только в паре готовых
+ *    кадров паузы/возобновления). CRC8 — стандартный poly 0x07 (MSB-first,
+ *    init 0, без финального XOR): таблица генерируется, в тестах сверяется
+ *    с эталонными кадрами thermy.
+ *
+ *  ПЕЧАТЬ (prepare → строки → finish, как в thermy):
+ *    prepare:  get_device_state, prepare_camera (сырой кадр 51 78 bc…),
+ *              set_dpi([0x32]), set_speed, set_energy, apply_energy,
+ *              update_device, start_lattice;
+ *    строки:   BITMAP (0xa2) с payload = 48 байт строки (384 точки / 8);
+ *              биты LSB-first, «1» = тёмный пиксель (печатать);
+ *    finish:   end_lattice, set_speed(8), feed(extra_feed),
+ *              get_device_state.
+ *
+ *  Модуль ЧИСТЫЙ (без DOM/Web Bluetooth) — собирает кадры и растр;
+ *  BLE-отправка (чанки, паузы, автопрофиль GATT) — в cat-printer-context
+ *  через переиспользуемый HprtBleTransport.
+ * ============================================================================
+ */
+
+/* ------------------------------ Константы ------------------------------ */
+
+/** Команды протокола (cat-protocol.ts → thermy Command) */
+export const CAT_CMD = {
+  RETRACT: 0xa0,
+  FEED: 0xa1,
+  BITMAP: 0xa2,
+  GET_DEVICE_STATE: 0xa3,
+  SET_DPI: 0xa4,
+  LATTICE: 0xa6,
+  GET_DEVICE_INFO: 0xa8,
+  UPDATE_DEVICE: 0xa9,
+  SPEED: 0xbd,
+  ENERGY: 0xaf,
+  APPLY_ENERGY: 0xbe,
+} as const;
+
+export const CAT_TYPE_TRANSFER = 0;
+export const CAT_TYPE_RESPONSE = 1;
+
+/** Головка MX10: 384 точки (58 мм бумага, зона печати 48 мм) */
+export const CAT_WIDTH = 384;
+export const CAT_BYTES_PER_LINE = CAT_WIDTH / 8; // 48
+
+/** Значения по умолчанию thermy (print_defaults + printer.extra_feed) */
+export const CAT_SPEED_DEFAULT = 35;
+export const CAT_ENERGY_DEFAULT = 8000;
+export const CAT_EXTRA_FEED_DEFAULT = 50;
+
+/* ------------------------------ CRC8 ----------------------------------- */
+
+/**
+ * Таблица CRC-8 (poly 0x07, MSB-first, init 0): table[t] = CRC байта t.
+ * Генерируется кодом — эквивалентна захардкоженной таблице thermy
+ * (проверено тестами: crc8("123456789") = 0xF4, кадры паузы/состояния).
+ */
+const CRC8_TABLE = (() => {
+  const t = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) {
+    let crc = i;
+    for (let b = 0; b < 8; b++) {
+      crc = crc & 0x80 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff;
+    }
+    t[i] = crc;
+  }
+  return t;
+})();
+
+/** CRC8 потока байтов: crc = TABLE[crc ^ byte], init 0 */
+export function crc8(data: ArrayLike<number>): number {
+  let crc = 0;
+  for (let i = 0; i < data.length; i++) {
+    crc = CRC8_TABLE[(crc ^ data[i]) & 0xff];
+  }
+  return crc & 0xff;
+}
+
+/** Реверс битов байта (для PBM-порядка; в основном пути не нужен) */
+export function reverseBits(i: number): number {
+  i = ((i & 0b10101010) >> 1) | ((i & 0b01010101) << 1);
+  i = ((i & 0b11001100) >> 2) | ((i & 0b00110011) << 2);
+  return ((i & 0b11110000) >> 4) | ((i & 0b00001111) << 4);
+}
+
+/* ------------------------------ Кадры ---------------------------------- */
+
+/** Сборка кадра: 51 78 cmd type len_lo len_hi payload… crc8(payload) ff */
+export function makeFrame(
+  command: number,
+  payload: ArrayLike<number> = [],
+  type: number = CAT_TYPE_TRANSFER
+): Uint8Array {
+  const len = payload.length;
+  // 6 байт шапки + payload + CRC + хвост 0xff (итого 8 + len)
+  const frame = new Uint8Array(8 + len);
+  frame[0] = 0x51;
+  frame[1] = 0x78;
+  frame[2] = command & 0xff;
+  frame[3] = type & 0xff;
+  frame[4] = len & 0xff;
+  frame[5] = (len >> 8) & 0xff;
+  for (let i = 0; i < len; i++) frame[6 + i] = payload[i] & 0xff;
+  frame[6 + len] = crc8(payload);
+  frame[7 + len] = 0xff;
+  return frame;
+}
+
+/** Целое → little-endian байты фиксированной длины (thermy bytes_from_int) */
+export function bytesFromInt(value: number, length = 1): Uint8Array {
+  const out = new Uint8Array(length);
+  let v = value;
+  for (let i = 0; i < length && v !== 0; i++) {
+    out[i] = v & 0xff;
+    v = Math.floor(v / 256);
+  }
+  return out;
+}
+
+/** Сырой кадр prepare_camera из thermy (копия байт-в-байт) */
+const CAMERA_FRAME = new Uint8Array([0x51, 0x78, 0xbc, 0x00, 0x01, 0x02, 0x01, 0x2d, 0xff]);
+
+/** start_lattice: aa 55 17 38 44 5f 5f 5f 44 38 2c */
+const LATTICE_START_PAYLOAD = new Uint8Array([
+  0xaa, 0x55, 0x17, 0x38, 0x44, 0x5f, 0x5f, 0x5f, 0x44, 0x38, 0x2c,
+]);
+/** end_lattice: aa 55 17 00 00 00 00 00 00 00 17 */
+const LATTICE_END_PAYLOAD = new Uint8Array([
+  0xaa, 0x55, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17,
+]);
+
+/** Готовые кадры паузы/возобновления из thermy (type=RESPONSE) — про запас */
+export function catPauseFrame(): Uint8Array {
+  return makeFrame(CAT_CMD.GET_DEVICE_STATE, [0x10], CAT_TYPE_RESPONSE);
+}
+export function catResumeFrame(): Uint8Array {
+  return makeFrame(CAT_CMD.GET_DEVICE_STATE, [0x00], CAT_TYPE_RESPONSE);
+}
+
+/** BITMAP-кадр одной строки растра (payload — уже упакованные байты) */
+export function catLineFrame(line: ArrayLike<number>): Uint8Array {
+  return makeFrame(CAT_CMD.BITMAP, line);
+}
+
+/**
+ * Подготовка принтера к заданию (thermy CatPrinter.prepare):
+ * state → camera → dpi → speed → energy → apply → update → start lattice.
+ */
+export function catPrepareFrames(speed: number, energy: number): Uint8Array[] {
+  return [
+    makeFrame(CAT_CMD.GET_DEVICE_STATE, bytesFromInt(0)),
+    CAMERA_FRAME,
+    makeFrame(CAT_CMD.SET_DPI, bytesFromInt(0x32)), // thermy шлёт 50 независимо от dpi
+    makeFrame(CAT_CMD.SPEED, bytesFromInt(Math.max(1, Math.min(127, Math.round(speed))))),
+    makeFrame(CAT_CMD.ENERGY, bytesFromInt(Math.max(0, Math.min(0xffff, Math.round(energy))), 2)),
+    makeFrame(CAT_CMD.APPLY_ENERGY, bytesFromInt(0x01)),
+    makeFrame(CAT_CMD.UPDATE_DEVICE, bytesFromInt(0)),
+    makeFrame(CAT_CMD.LATTICE, LATTICE_START_PAYLOAD),
+  ];
+}
+
+/** Завершение задания (thermy CatPrinter.finish) */
+export function catFinishFrames(extraFeed: number): Uint8Array[] {
+  return [
+    makeFrame(CAT_CMD.LATTICE, LATTICE_END_PAYLOAD),
+    makeFrame(CAT_CMD.SPEED, bytesFromInt(8)),
+    makeFrame(CAT_CMD.FEED, bytesFromInt(Math.max(0, Math.min(0xffff, Math.round(extraFeed))), 2)),
+    makeFrame(CAT_CMD.GET_DEVICE_STATE, bytesFromInt(0)),
+  ];
+}
+
+/* ------------------------------ Растр ---------------------------------- */
+
+export interface CatBitmap {
+  /** Всегда CAT_WIDTH байт на строку */
+  lines: Uint8Array[];
+  /** Высота в строках */
+  height: number;
+}
+
+/**
+ * RGBA → биты строки, LSB-first (thermy rgbaToBits): бит d = пиксель d
+ * строки; «1» = тёмный пиксель (порог 128 по яркости Rec.709). Ширина
+ * нормализуется к CAT_WIDTH: более узкий растр центрируется, более
+ * широкий — обжимается до ширины печати (nearest).
+ */
+export function rgbaToCatLines(
+  rgba: ArrayLike<number>,
+  width: number,
+  height: number
+): CatBitmap {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  // Яркость каждой строки исходника в «печатные» биты по CAT_WIDTH
+  const lines: Uint8Array[] = [];
+  const offsetX = w >= CAT_WIDTH ? 0 : Math.floor((CAT_WIDTH - w) / 2);
+  for (let y = 0; y < h; y++) {
+    const line = new Uint8Array(CAT_BYTES_PER_LINE);
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const r = rgba[i] ?? 255;
+      const g = rgba[i + 1] ?? r;
+      const b = rgba[i + 2] ?? r;
+      const gray = 0.2125 * r + 0.7154 * g + 0.0721 * b;
+      if (gray < 128) {
+        const dx = x + offsetX; // при w > CAT_WIDTH offsetX = 0: правый край срезается
+        if (dx >= 0 && dx < CAT_WIDTH) {
+          line[dx >> 3] |= 1 << (dx & 7);
+        }
+      }
+    }
+    lines.push(line);
+  }
+  return { lines, height: h };
+}
+
+export interface CatPrintOptions {
+  /** Скорость печати (thermy print_defaults.speed = 35) */
+  speed?: number;
+  /** Энергия (thermy print_defaults.energy = 8000) */
+  energy?: number;
+  /** Прогон бумаги в конце, точек (thermy printer.extra_feed = 50) */
+  extraFeed?: number;
+}
+
+/**
+ * Полное задание печати ОДНИМ буфером: prepare + строки + finish.
+ * Принимает RGBA-данные холста (canvas.getContext("2d").getImageData().data).
+ */
+export function buildCatJob(
+  rgba: ArrayLike<number>,
+  width: number,
+  height: number,
+  opts?: CatPrintOptions
+): Uint8Array {
+  const { lines } = rgbaToCatLines(rgba, width, height);
+  const parts: Uint8Array[] = [
+    ...catPrepareFrames(opts?.speed ?? CAT_SPEED_DEFAULT, opts?.energy ?? CAT_ENERGY_DEFAULT),
+    ...lines.map((l) => catLineFrame(l)),
+    ...catFinishFrames(opts?.extraFeed ?? CAT_EXTRA_FEED_DEFAULT),
+  ];
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
