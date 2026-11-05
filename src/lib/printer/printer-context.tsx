@@ -39,6 +39,13 @@ export type ConnectionStatus =
   | "connected"
   | "printing";
 
+/** Фирменный таймаут драйвера («Timeout waiting for notification 0xa1»):
+ *  GATT-соединение открылось, но принтер молчит на статус-запрос — обычно
+ *  это не MXW01, а «котиковый» принтер (MX10/GB03…, сервис ae30 у клонов).
+ *  В v1.0.62 такие ошибки распознаются и показываются подсказкой
+ *  с переключением на cat-транспорт (баннер в шапке). */
+const NOT_MXW01_RE = /timeout waiting for notification/i;
+
 interface PrinterContextValue {
   status: ConnectionStatus;
   /** Живая поддержка Web Bluetooth: может появиться ПОСЛЕ загрузки страницы,
@@ -49,6 +56,9 @@ interface PrinterContextValue {
   statusMessage: string;
   printerState: PrinterState | null;
   lastError: string | null;
+  /** v1.0.62: последняя ошибка похожа на «чужой принтер» (таймаут статуса)
+   *  — шапка показывает баннер с переключением на MX10 (cat) */
+  notMxw01Hint: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   /**
@@ -107,6 +117,7 @@ export function PrinterProvider({
   const [statusMessage, setStatusMessage] = useState("pc.notConnected");
   const [printerState, setPrinterState] = useState<PrinterState | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [notMxw01Hint, setNotMxw01Hint] = useState(false);
 
   /* --- Поддержка Web Bluetooth: живая, а не разовая -------------------
    * Safari, Firefox и ВСЕ обычные браузеры iOS/iPadOS не имеют Web
@@ -216,6 +227,7 @@ export function PrinterProvider({
   const connect = useCallback(async () => {
     if (status === "connecting" || status === "connected") return;
     setLastError(null);
+    setNotMxw01Hint(false);
     setStatus("connecting");
     setStatusMessage("common.connecting");
     try {
@@ -225,13 +237,28 @@ export function PrinterProvider({
       setStatus("connected");
       setStatusMessage("pc.connected");
     } catch (e) {
+      const raw = (e as Error)?.message ?? String(e);
+      /* Драйвер падает ПОСЛЕ открытия GATT (статус-запрос без ответа) —
+       * разрываем «полуподключение», чтобы не занимать слот принтера */
+      try {
+        await clientRef.current?.disconnect();
+      } catch {
+        /* уже разорвано */
+      }
       clientRef.current = null;
       setStatus("disconnected");
       setStatusMessage("pc.connectFailed");
-      setLastError((e as Error)?.message ?? String(e));
+      if (NOT_MXW01_RE.test(raw)) {
+        /* v1.0.62: вместо сырого «Timeout waiting for notification 0xa1» —
+         * понятная подсказка + баннер с переключением на MX10 (cat) */
+        setNotMxw01Hint(true);
+        setLastError(t("pc.maybeCatHint"));
+        throw new Error(t("pc.maybeCatHint"));
+      }
+      setLastError(raw);
       throw e;
     }
-  }, [attachListeners, ensureClient, status]);
+  }, [attachListeners, ensureClient, status, t]);
 
   const disconnect = useCallback(async () => {
     const client = clientRef.current;
@@ -247,6 +274,7 @@ export function PrinterProvider({
     setStatusMessage("pc.notConnected");
     setPrinterState(null);
     setDeviceName(null);
+    setNotMxw01Hint(false);
   }, [supported]);
 
   const printCanvas = useCallback(
@@ -275,7 +303,14 @@ export function PrinterProvider({
       } catch (e) {
         setStatus("connected");
         setStatusMessage("common.printError");
-        setLastError((e as Error)?.message ?? String(e));
+        const raw = (e as Error)?.message ?? String(e);
+        if (NOT_MXW01_RE.test(raw)) {
+          /* v1.0.62: принтер подключён, но молчит — подсказка про cat */
+          setNotMxw01Hint(true);
+          setLastError(t("pc.maybeCatHint"));
+          throw new Error(t("pc.maybeCatHint"));
+        }
+        setLastError(raw);
         throw e;
       }
     },
@@ -290,12 +325,13 @@ export function PrinterProvider({
       statusMessage,
       printerState,
       lastError,
+      notMxw01Hint,
       connect,
       disconnect,
       printCanvas,
       recheckSupport,
     }),
-    [status, supported, deviceName, statusMessage, printerState, lastError, connect, disconnect, printCanvas, recheckSupport]
+    [status, supported, deviceName, statusMessage, printerState, lastError, notMxw01Hint, connect, disconnect, printCanvas, recheckSupport]
   );
 
   return <PrinterContext.Provider value={value}>{children}</PrinterContext.Provider>;

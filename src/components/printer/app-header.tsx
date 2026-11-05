@@ -389,7 +389,7 @@ export function AppHeader({
   lang: Lang;
   setLang: (l: Lang) => void;
 }) {
-  const { status, deviceName, statusMessage, printerState, lastError, connect, disconnect, printCanvas } =
+  const { status, deviceName, statusMessage, printerState, lastError, notMxw01Hint, connect, disconnect, printCanvas } =
     usePrinter();
   const usb = useUsbPrinter();
   const hprt = useHprtPrinter();
@@ -448,9 +448,32 @@ export function AppHeader({
     return () => window.clearTimeout(timer);
   }, [resetArmed]);
 
-  /* Браузер без Web Bluetooth: авто-предупреждение при загрузке + повторный
-     показ по кнопке «Нет Bluetooth» и по событию из вкладок (попытка печати).
-     Состояние выводится из статуса контекста — без setState в эффекте. */
+  /* Предупреждение «это не MXW01, а котиковый принтер» (v1.0.62): появляется
+   * после таймаута статуса, закрывается крестиком и сбрасывается сам */
+  const [catHintClosed, setCatHintClosed] = useState(false);
+  useEffect(() => {
+    if (!notMxw01Hint) setCatHintClosed(false);
+  }, [notMxw01Hint]);
+  /** Переключение на cat прямо из баннера: клик — уже user gesture,
+   * так что можно сразу открыть диалог Bluetooth */
+  const handleSwitchToCat = async () => {
+    setCatHintClosed(true);
+    /* Разорвать MXW01-соединение: иначе клиент остаётся подписанным на
+     * нотификации и занимает слот котикового принтера */
+    try {
+      await disconnect();
+    } catch {
+      /* уже разорвано */
+    }
+    usb.setTransport("cat");
+    try {
+      await cat.connect();
+    } catch {
+      /* ошибки подключения видны в чипе/тосте cat-транспорта */
+    }
+  };
+
+  /* Предупреждение: браузер без Web Bluetooth */
   const [bleManual, setBleManual] = useState(false);
   const [bleClosed, setBleClosed] = useState(false);
   const bleOpen = (status === "unsupported" && !bleClosed) || bleManual;
@@ -931,7 +954,7 @@ export function AppHeader({
                     ? "hprt-connect"
                     : usb.transport === "cat"
                       ? "cat-connect"
-                      : undefined
+                      : "ble-connect"
               }
               title={
                 usb.transport === "usb" && !usb.supported
@@ -1460,6 +1483,7 @@ export function AppHeader({
                 <Button
                   variant="outline"
                   size="sm"
+                  data-testid="test-page"
                   className="h-8 w-full gap-1.5 rounded-lg text-xs font-medium"
                   disabled={testPrinting || status === "printing"}
                   onClick={() => void handleTestPage()}
@@ -1951,6 +1975,37 @@ export function AppHeader({
           </Dialog>
         </div>
       </div>
+
+      {/* v1.0.62: «Похоже, это MX10/GB03» — после таймаута статуса MXW01.
+          Показываем на BLE-транспорте, пока пользователь не закрыл подсказку */}
+      {notMxw01Hint && usb.transport === "ble" && !catHintClosed && (
+        <div
+          data-testid="cat-hint-banner"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:px-4 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <Cat className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
+          <p className="min-w-0 flex-1 leading-relaxed">{t("pc.maybeCatBanner")}</p>
+          <Button
+            size="sm"
+            data-testid="cat-hint-switch"
+            className="h-7 shrink-0 gap-1.5 rounded-full bg-orange-600 px-3 text-xs font-medium text-white shadow-sm hover:bg-orange-700 dark:bg-orange-600 dark:hover:bg-orange-700"
+            onClick={() => void handleSwitchToCat()}
+          >
+            <Cat className="h-3.5 w-3.5" />
+            {t("pc.maybeCatSwitch")}
+          </Button>
+          <button
+            type="button"
+            data-testid="cat-hint-close"
+            aria-label={t("pc.maybeCatClose")}
+            title={t("pc.maybeCatClose")}
+            className="shrink-0 rounded-full p-1 text-amber-500 transition-colors hover:bg-amber-100 hover:text-amber-700 dark:hover:bg-amber-900/50 dark:hover:text-amber-300"
+            onClick={() => setCatHintClosed(true)}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Предупреждение: браузер без Web Bluetooth */}
       <BleWarningDialog t={t} open={bleOpen} onOpenChange={handleBleOpenChange} />

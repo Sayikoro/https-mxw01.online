@@ -1,6 +1,6 @@
 # История изменений — MXW01 Web Terminal
 
-**Текущая версия: 1.0.61**
+**Текущая версия: 1.0.62**
 
 Правила нумерации: большое изменение увеличивает основную версию (0.1 → 0.2 → …), мелкие изменения группируются в подверсии (0.2.1, 0.2.2, …).
 
@@ -746,6 +746,16 @@
 - site.ts 1.0.59; public/sw.js → mxw01-pwa-v23.
 - Тесты: v156 расширен (мастер: при новом релизе и отсутствующей панели показывается инструкция + прямая ссылка на кит + «Проверить снова»; версии подняты до 1.0.59); test-php-update-git.sh 42/42, test-php-update.sh 27/27, test-admin.sh 46/46.
 - Правки: src/components/printer/app-header.tsx (мастер обновления), src/locales/ru.ts + en.ts (ключи set.upd*), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), scripts/v156-update-check.js, versions.md.
+
+### 1.0.62 — Подсказка «это не MXW01, а котиковый принтер» (MX10-клоны в MXW01-диалоге)
+
+- Живой сценарий пользователя: при печати на MX10 терминал показывал сырую ошибку «Timeout waiting for notification 0xa1». Причина: MX10-подобные клоны рекламируют сервис ae30 и попадают в диалог MXW01; драйвер подключается «успешно» (ошибка статуса глотается), но при печати requestStatus (0xa1) молчит 5 с и падает с фирменным таймаутом.
+- Распознавание (src/lib/printer/printer-context.tsx): фирменный таймаут `Timeout waiting for notification` ловится в printCanvas/connect обёртки; вместо сырой ошибки наружу уходит понятный текст pc.maybeCatHint, добавляется флаг notMxw01Hint; «полуподключение» (GATT открыт, принтер не MXW01) аккуратно разрывается, чтобы не занимать слот принтера.
+- Баннер в шапке (app-header.tsx, data-testid="cat-hint-banner"): «Похоже, это „котиковый“ принтер…» с кнопкой «Переключиться на MX10 (cat)» (testid cat-hint-switch) и крестиком (cat-hint-close). По кнопке: MXW01-соединение разрывается, транспорт переключается на cat и сразу открывается подключение (клик — user gesture, диалог Bluetooth открывается легально). Баннер показывается только на BLE-транспорте.
+- Локали RU/EN: pc.maybeCatHint / pc.maybeCatBanner / pc.maybeCatSwitch / pc.maybeCatClose.
+- site.ts 1.0.62; public/sw.js → mxw01-pwa-v26.
+- Тесты: НОВЫЙ scripts/v162-mx10-hint.js (Playwright, 14 проверок: фейковый GATT-стаб «котикового клона» — сервис ae30, характеристики ae01/ae02/ae03 без ответов; печать тест-страницы → в тосте подсказка, сырой таймаут не просачивается; баннер с кнопкой и крестиком; переключение → оранжевый чип cat; при обычной ошибке подключения баннера нет). Регресс: v156/v158/v159/v160 зелёные, tsc — 0 ошибок в src, eslint чисто.
+- Правки: src/lib/printer/printer-context.tsx, src/components/printer/app-header.tsx (+ testid ble-connect/test-page), src/locales/ru.ts + en.ts, scripts/v162-mx10-hint.js, versions.md.
 
 ### 1.0.61 — Поддержка MX10 (cat-протокол, порт thermy)
 

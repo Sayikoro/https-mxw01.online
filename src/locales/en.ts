@@ -80,6 +80,10 @@ export const en: Record<string, string> = {
   "pc.canvasUnavailable": "Print canvas is unavailable",
   "pc.sending": "Sending to printer…",
   "pc.done": "Printing finished",
+  "pc.maybeCatHint": "The printer did not answer MXW01 commands (status timeout). This looks like an MX10/GB03 or another “cat” printer — switch the printer type to “MX10 (cat)” and reconnect.",
+  "pc.maybeCatBanner": "This looks like a “cat” printer (MX10, GB03 and siblings) — it speaks a different protocol. Switch the printer type to “MX10 (cat)” and reconnect.",
+  "pc.maybeCatSwitch": "Switch to MX10 (cat)",
+  "pc.maybeCatClose": "Hide the hint",
 
   // --- warning for browsers without Web Bluetooth ---
   "ble.title": "Browser not supported",
