@@ -1,6 +1,6 @@
 # История изменений — MXW01 Web Terminal
 
-**Текущая версия: 1.0.63**
+**Текущая версия: 1.0.64**
 
 Правила нумерации: большое изменение увеличивает основную версию (0.1 → 0.2 → …), мелкие изменения группируются в подверсии (0.2.1, 0.2.2, …).
 
@@ -746,6 +746,20 @@
 - site.ts 1.0.59; public/sw.js → mxw01-pwa-v23.
 - Тесты: v156 расширен (мастер: при новом релизе и отсутствующей панели показывается инструкция + прямая ссылка на кит + «Проверить снова»; версии подняты до 1.0.59); test-php-update-git.sh 42/42, test-php-update.sh 27/27, test-admin.sh 46/46.
 - Правки: src/components/printer/app-header.tsx (мастер обновления), src/locales/ru.ts + en.ts (ключи set.upd*), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), scripts/v156-update-check.js, versions.md.
+
+### 1.0.64 — MX10: flush-модель отправки kitty-web (печать «прошла» — принтер молчал)
+
+- Живой отчёт пользователя (продолжение 1.0.63): на «MX10 (cat)» печать по-прежнему «прошла» (GATT-записи честно прошли), но принтер не начал печатать. Сверка транспорта с эталонной ВЕБ-реализацией kitty-web (NaitLee/Kitty-Printer — первоисточник cat-протокола, работает в том же Web Bluetooth) нашла четыре расхождения:
+  1. мы резали поток задания на произвольные 180-байтные чанки с паузой 15 мс — кадры рвались посередине, приёмный буфер MCU переполнялся, парсер терял кадры и МОЛЧА выбрасывал задание; kitty-web копит кадры в буфер 200 Байт ЦЕЛЫМИ и пишет буфер ОДНОЙ записью (writeValueWithoutResponse);
+  2. пауза подачи (бит 0x10) проверялась раз в 16 чанков (~2,9 КБ) — за это время буфер принтера уже переполнялся; у kitty-web ПЕРЕД КАЖДЫМ flush, то есть каждые ≤200 Б (flush(): while (state.pause) delay(100));
+  3. пустые строки отправлялись пустыми BITMAP-кадрами (забивают эфир впустую) — kitty-web превращает серии пустых строк в set_speed(8) → feed(n) → set_speed(speed), а хвостовые пустые добавляет к прогону finish;
+  4. дефолты thermy (скорость 35 / энергия 8000 / прогон 50) — у kitty-web для семейства GB03/MX: 32 / 24000 / 100; 8000 энергии на части клонов даёт слишком бледную/невидимую печать.
+- cat-protocol.ts: дефолты подняты до kitty-web (CAT_SPEED_DEFAULT 32, CAT_ENERGY_DEFAULT 24000, CAT_EXTRA_FEED_DEFAULT 100); новые константы CAT_FLUSH_MTU = 200, CAT_FLUSH_DELAY_MS = 20, CAT_TAIL_DRAIN_MS = 500; НОВЫЕ чистые функции isCatLineBlank (строка без единого бита) и buildCatFrameSequence (полное задание КАК ПОСЛЕДОВАТЕЛЬНОСТЬ КАДРОВ — точный порт потока печати kitty-web: prepare → содержательные строки BITMAP + серии пустых строк через feed на скорости 8 → finish с хвостовыми пустыми в прогоне); buildCatJob оставлен для совместимости/тестов. Настройки пользователя (mxw01-cat-*) приоритетнее дефолтов — кто менял вручную, остаётся на своих значениях; дефолт flush-буфера теперь 200 (был чанк 180), пауза 20 мс (была 15).
+- ble-transport.ts: НОВЫЙ метод sendFrames(frames, {flushMtu, flushDelayMs, onProgress, log}) — транспортная половина модели kitty-web: кадры копятся в буфер ≤200 Б целыми, буфер уходит одной BLE-записью (writeValueWithoutResponse, либо write для характеристик без w/o-r), после КАЖДОЙ записи пауза 20 мс, ПЕРЕД каждой записью и в конце — ожидание снятия паузы подачи (до ~20 с, дальше честная ошибка pause; бумага/крышка/перегрев/низкий заряд — немедленный отказ, как в v1.0.63); после последнего flush — дрейн 500 мс (kitty-web: delay(500) перед disconnect), чтобы хвост задания гарантированно дошёл до MCU до тоста «отправлено»; кадры больше flush-буфера (в текущем протоколе не существуют, max BITMAP = 57 Б) пишутся по частям; старый send() (чанковый) остался для raw-консоли диагностики.
+- cat-printer-context.tsx: печать printCanvas переведена на buildCatFrameSequence + sendFrames; журнал показывает состав задания («N строк BITMAP, M пустых → feed, K кадров, X Б») и итог («↑ X Б / K кадров / F flush × ≤200 Б, пауза 20 мс»).
+- site.ts 1.0.64; public/sw.js → mxw01-pwa-v28; PANEL_VERSION → 1.0.64.
+- Тесты: НОВЫЙ scripts/v164-mx10-flush.js (Playwright, 18 проверок, СТРОГИЙ стаб ae30: каждая BLE-запись ≤ 200 Б; записей ≥ ⌈байты/200⌉; весь поток разбирается на кадры 51 78 … с верным CRC-8 — записи не рвут кадры; в потоке есть BITMAP и FEED; дефолты set_speed(32) и set_energy(24000 = DC 05) в prepare; в журнале диагностики — flush-модель; пауза посреди отправки → ожидание ≥1,5 с → resume → задание доехало до хвоста get_device_state; «нет бумаги» → тост и НОЛЬ байт); test-cat-protocol.ts расширен до 56 проверок (дефолты kitty-web, isCatLineBlank, buildCatFrameSequence: межстрочный feed set_speed(8)→feed→set_speed(32), хвостовой feed = пустые + прогон, пустое изображение без единого BITMAP, totalBytes = сумме кадров, все кадры ≤ flush-буфера).
+- Правки: src/lib/printer/cat/cat-protocol.ts, src/lib/printer/cat/cat-printer-context.tsx, src/lib/printer/hprt/ble-transport.ts, scripts/test-cat-protocol.ts, scripts/v164-mx10-flush.js (новый), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), versions.md.
 
 ### 1.0.63 — MX10 молчит при «успешной» печати: сервис ae30 + flow-control (kitty-web)
 

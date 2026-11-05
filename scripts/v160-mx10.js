@@ -114,8 +114,8 @@ async function openSettings(page) {
   ok((await speed.count()) === 1 && (await energy.count()) === 1 && (await feed.count()) === 1,
     "в Настройках есть блок MX10 (скорость, энергия, прогон)");
   // Значения по умолчанию thermy: 35 / 8000 / 50
-  ok((await speed.inputValue()) === "35", `скорость по умолчанию 35 (${await speed.inputValue()})`);
-  ok((await energy.inputValue()) === "8000", `энергия по умолчанию 8000 (${await energy.inputValue()})`);
+  ok((await speed.inputValue()) === "32", `скорость по умолчанию 32 (kitty-web) (${await speed.inputValue()})`);
+  ok((await energy.inputValue()) === "24000", `энергия по умолчанию 24000 (kitty-web) (${await energy.inputValue()})`);
   // Кламп и запись в localStorage
   await speed.fill("999");
   await speed.blur();

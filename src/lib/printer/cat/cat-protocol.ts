@@ -16,14 +16,24 @@
  *    init 0, без финального XOR): таблица генерируется, в тестах сверяется
  *    с эталонными кадрами thermy.
  *
- *  ПЕЧАТЬ (prepare → строки → finish, как в thermy):
+ *  ПЕЧАТЬ (prepare → строки → finish, как в kitty-web/thermy):
  *    prepare:  get_device_state, prepare_camera (сырой кадр 51 78 bc…),
  *              set_dpi([0x32]), set_speed, set_energy, apply_energy,
  *              update_device, start_lattice;
  *    строки:   BITMAP (0xa2) с payload = 48 байт строки (384 точки / 8);
  *              биты LSB-first, «1» = тёмный пиксель (печатать);
- *    finish:   end_lattice, set_speed(8), feed(extra_feed),
- *              get_device_state.
+ *              ПОДРЯД ИДУЩИЕ ПУСТЫЕ строки не шлются как BITMAP — они
+ *              превращаются в feed(n) на скорости 8 (модель kitty-web);
+ *    finish:   end_lattice, set_speed(8), feed(extra_feed + хвостовые
+ *              пустые строки), get_device_state.
+ *
+ *  ОТПРАВКА (модель kitty-web, решает проблему «печать прошла, принтер
+ *  молчит»): кадры копятся в буфер 200 Б ЦЕЛЫМИ кадрами; буфер уходит
+ *  одной BLE-записью ≤ 200 Б, после КАЖДОЙ записи — пауза 20 мс и
+ *  проверка бита pause (0x10) из нотификаций: пока буфер принтера полон,
+ *  отправка ЖДЁТ (flush() в kitty-web: while (state.pause) delay(100)).
+ *  Сборка этой последовательности — buildCatFrameSequence, транспорт —
+ *  HprtBleTransport.sendFrames.
  *
  *  Модуль ЧИСТЫЙ (без DOM/Web Bluetooth) — собирает кадры и растр;
  *  BLE-отправка (чанки, паузы, автопрофиль GATT) — в cat-printer-context
@@ -55,10 +65,30 @@ export const CAT_TYPE_RESPONSE = 1;
 export const CAT_WIDTH = 384;
 export const CAT_BYTES_PER_LINE = CAT_WIDTH / 8; // 48
 
-/** Значения по умолчанию thermy (print_defaults + printer.extra_feed) */
-export const CAT_SPEED_DEFAULT = 35;
-export const CAT_ENERGY_DEFAULT = 8000;
-export const CAT_EXTRA_FEED_DEFAULT = 50;
+/**
+ * Значения по умолчанию kitty-web (constants.ts — веб-первоисточник
+ * cat-протокола, проверенный на реальных ae30-принтерах): DEF_SPEED = 32,
+ * DEF_ENERGY = 24000 (диапазон 12000…48000), DEF_FINISH_FEED = 100.
+ * Раньше стояли дефолты thermy (35/8000/50): 8000 энергии на части
+ * клонов даёт СЛИШКОМ бледную/невидимую печать — kitty-web для семейства
+ * GB03/MX использует 24000.
+ */
+export const CAT_SPEED_DEFAULT = 32;
+export const CAT_ENERGY_DEFAULT = 24000;
+export const CAT_EXTRA_FEED_DEFAULT = 100;
+
+/**
+ * Размер flush-буфера (kitty-web CatPrinter.mtu = 200): кадры копятся в
+ * буфер ЦЕЛЫМИ и уходят одной записью ≤ 200 Байт, после каждой записи —
+ * пауза CAT_FLUSH_DELAY_MS. Произвольная нарезка потока чанками (v1.0.61)
+ * переполняла приёмный буфер MCU: байты терялись, поток кадров рвался,
+ * принтер молча выбрасывал задание при честном тосте «отправлено».
+ */
+export const CAT_FLUSH_MTU = 200;
+/** Пауза после КАЖДОГО flush (kitty-web flush(): await delay(20)) */
+export const CAT_FLUSH_DELAY_MS = 20;
+/** Дрейн после последнего flush (kitty-web: delay(500) перед disconnect) */
+export const CAT_TAIL_DRAIN_MS = 500;
 
 /* ------------------------------ CRC8 ----------------------------------- */
 
@@ -281,17 +311,95 @@ export function rgbaToCatLines(
 }
 
 export interface CatPrintOptions {
-  /** Скорость печати (thermy print_defaults.speed = 35) */
+  /** Скорость печати (kitty-web DEF_SPEED = 32) */
   speed?: number;
-  /** Энергия (thermy print_defaults.energy = 8000) */
+  /** Энергия (kitty-web DEF_ENERGY = 24000) */
   energy?: number;
-  /** Прогон бумаги в конце, точек (thermy printer.extra_feed = 50) */
+  /** Прогон бумаги в конце, точек (kitty-web DEF_FINISH_FEED = 100) */
   extraFeed?: number;
+}
+
+/** Все байты строки нулевые → «пустая» строка (kitty-web: line.every(b => b === 0)) */
+export function isCatLineBlank(line: ArrayLike<number>): boolean {
+  for (let i = 0; i < line.length; i++) {
+    if ((line[i] & 0xff) !== 0) return false;
+  }
+  return true;
+}
+
+export interface CatFrameSequence {
+  /** Полная последовательность кадров: prepare + строки/feed + finish */
+  frames: Uint8Array[];
+  /** Суммарный размер потока (байт) — для прогресса отправки */
+  totalBytes: number;
+  /** Напечатанных BITMAP-строк */
+  bitmapLines: number;
+  /** Пустых строк, конвертированных в feed (не в BITMAP) */
+  fedLines: number;
+}
+
+/**
+ * Полное задание печати КАК ПОСЛЕДОВАТЕЛЬНОСТЬ КАДРОВ — точный порт
+ * потока печати kitty-web (components/Preview.tsx):
+ *   - prepare(speed, energy);
+ *   - подряд идущие ПУСТЫЕ строки НЕ отправляются как BITMAP: они
+ *     накапливаются и перед следующей содержательной строкой уходят
+ *     одним feed(blank) на скорости 8 (экономия времени и буфера —
+ *     сотни пустых BITMAP-кадров забивают эфир впустую);
+ *   - хвостовые пустые строки добавляются к прогону finish
+ *     (kitty-web: finish(blank + finish_feed));
+ *   - finish(extra_feed).
+ * Отправка (буфер 200 Б целых кадров, пауза, flow-control) — в
+ * HprtBleTransport.sendFrames.
+ */
+export function buildCatFrameSequence(
+  rgba: ArrayLike<number>,
+  width: number,
+  height: number,
+  opts?: CatPrintOptions
+): CatFrameSequence {
+  const speed = clampPrintSpeed(opts?.speed ?? CAT_SPEED_DEFAULT);
+  const energy = opts?.energy ?? CAT_ENERGY_DEFAULT;
+  const extraFeed = opts?.extraFeed ?? CAT_EXTRA_FEED_DEFAULT;
+  const { lines } = rgbaToCatLines(rgba, width, height);
+  const frames: Uint8Array[] = [...catPrepareFrames(speed, energy)];
+  let blank = 0;
+  let bitmapLines = 0;
+  let fedLines = 0;
+  for (const line of lines) {
+    if (isCatLineBlank(line)) {
+      blank += 1;
+      continue;
+    }
+    if (blank > 0) {
+      // kitty-web: setSpeed(8) → feed(blank) → setSpeed(speed)
+      frames.push(makeFrame(CAT_CMD.SPEED, bytesFromInt(8)));
+      frames.push(makeFrame(CAT_CMD.FEED, bytesFromInt(Math.min(blank, 0xffff), 2)));
+      frames.push(makeFrame(CAT_CMD.SPEED, bytesFromInt(speed)));
+      fedLines += blank;
+      blank = 0;
+    }
+    frames.push(catLineFrame(line));
+    bitmapLines += 1;
+  }
+  // Хвостовые пустые строки уйдут в прогоне finish(blank + extra_feed) —
+  // считаем их конвертированными в feed (как kitty-web)
+  fedLines += blank;
+  frames.push(...catFinishFrames(Math.min(blank + extraFeed, 0xffff)));
+  let totalBytes = 0;
+  for (const f of frames) totalBytes += f.length;
+  return { frames, totalBytes, bitmapLines, fedLines };
+}
+
+function clampPrintSpeed(n: number): number {
+  return Math.max(1, Math.min(127, Math.round(n)));
 }
 
 /**
  * Полное задание печати ОДНИМ буфером: prepare + строки + finish.
  * Принимает RGBA-данные холста (canvas.getContext("2d").getImageData().data).
+ * ОСТАВЛЕН для совместимости/тестов; живой путь печати —
+ * buildCatFrameSequence + HprtBleTransport.sendFrames (модель kitty-web).
  */
 export function buildCatJob(
   rgba: ArrayLike<number>,

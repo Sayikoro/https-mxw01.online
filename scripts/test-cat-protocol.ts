@@ -12,7 +12,13 @@ import {
   CAT_TYPE_RESPONSE,
   CAT_WIDTH,
   CAT_BYTES_PER_LINE,
+  CAT_ENERGY_DEFAULT,
+  CAT_EXTRA_FEED_DEFAULT,
+  CAT_FLUSH_DELAY_MS,
+  CAT_FLUSH_MTU,
+  CAT_SPEED_DEFAULT,
   bytesFromInt,
+  buildCatFrameSequence,
   buildCatJob,
   catFinishFrames,
   catLineFrame,
@@ -22,6 +28,7 @@ import {
   catResumeFrame,
   catStateSummary,
   crc8,
+  isCatLineBlank,
   makeFrame,
   reverseBits,
   rgbaToCatLines,
@@ -175,6 +182,75 @@ console.log("buildCatJob");
     "последний кадр — get_device_state");
   ok(job[job.length - 9 - 10] === 0x51 && job[job.length - 9 - 10 + 2] === CAT_CMD.FEED,
     "перед ним — feed (прогон)");
+}
+
+/* ------------------- Последовательность кадров (kitty-web) -------------- */
+
+console.log("buildCatFrameSequence (модель kitty-web)");
+// Дефолты kitty-web: скорость 32, энергия 24000, прогон 100
+ok(CAT_SPEED_DEFAULT === 32, `дефолт скорости kitty-web = 32 (${CAT_SPEED_DEFAULT})`);
+ok(CAT_ENERGY_DEFAULT === 24000, `дефолт энергии kitty-web = 24000 (${CAT_ENERGY_DEFAULT})`);
+ok(CAT_EXTRA_FEED_DEFAULT === 100, `дефолт прогона kitty-web = 100 (${CAT_EXTRA_FEED_DEFAULT})`);
+ok(CAT_FLUSH_MTU === 200, `flush-буфер kitty-web = 200 Б (${CAT_FLUSH_MTU})`);
+ok(CAT_FLUSH_DELAY_MS === 20, `пауза после flush kitty-web = 20 мс (${CAT_FLUSH_DELAY_MS})`);
+// isCatLineBlank
+ok(isCatLineBlank(new Uint8Array(48)), "isCatLineBlank: нулевая строка пуста");
+ok(!isCatLineBlank(new Uint8Array([0, 0, 1])), "isCatLineBlank: хоть один бит — не пуста");
+{
+  // Растр 384×5: строка 0 пуста, строки 1–2 с контентом, строки 3–4 пусты
+  const h = 5;
+  const px = new Uint8Array(CAT_WIDTH * h * 4).fill(255);
+  for (const y of [1, 2]) px.set([0, 0, 0, 255], (y * CAT_WIDTH) * 4);
+  const seq = buildCatFrameSequence(px, CAT_WIDTH, h, { speed: 32, energy: 24000, extraFeed: 100 });
+  // Подсчёт кадров по cmd
+  const cmds: number[] = [];
+  for (const f of seq.frames) cmds.push(f[2]);
+  const bitmaps = cmds.filter((c) => c === CAT_CMD.BITMAP).length;
+  const feeds = cmds.filter((c) => c === CAT_CMD.FEED).length;
+  const speeds = cmds.filter((c) => c === CAT_CMD.SPEED).length;
+  ok(bitmaps === 2, `содержательные строки → 2 BITMAP (${bitmaps})`);
+  ok(feeds === 2, `пустые строки → 2 FEED (межстрочный + хвостовой) (${feeds})`);
+  // Первый FEED — межстрочный: 1 пустая строка перед строкой 1, после set_speed(8)
+  const firstBitmapIdx = cmds.indexOf(CAT_CMD.BITMAP);
+  ok(
+    cmds[firstBitmapIdx - 3] === CAT_CMD.SPEED &&
+      cmds[firstBitmapIdx - 2] === CAT_CMD.FEED &&
+      cmds[firstBitmapIdx - 1] === CAT_CMD.SPEED,
+    "перед первым BITMAP: set_speed(8) → feed → set_speed(32) (kitty-web)"
+  );
+  ok(seq.frames[firstBitmapIdx - 2][6] === 1 && seq.frames[firstBitmapIdx - 2][7] === 0,
+    "межстрочный feed = 1 строка (LE 2 байта)");
+  ok(speeds === 4, `set_speed в кадрах: 8+32 в разрыве и в prepare/finish (${speeds})`);
+  ok(seq.bitmapLines === 2 && seq.fedLines === 3, `счётчики: 2 BITMAP, 3 пустых в feed — 1 межстрочная + 2 хвостовые (${seq.bitmapLines}/${seq.fedLines})`);
+  // Хвостовой FEED = хвостовые пустые (2) + прогон (100) = 102
+  let lf: Uint8Array | null = null;
+  for (let i = seq.frames.length - 1; i >= 0; i--) {
+    if (seq.frames[i][2] === CAT_CMD.FEED) { lf = seq.frames[i]; break; }
+  }
+  ok(lf !== null && lf[6] === 102 && lf[7] === 0,
+    `хвостовой feed = пустые (2) + прогон (100) = 102 (${lf ? lf[6] + (lf[7] << 8) : "—"})`);
+  // totalBytes = сумма длин кадров
+  let sum = 0;
+  for (const f of seq.frames) sum += f.length;
+  ok(seq.totalBytes === sum, `totalBytes = сумме кадров (${seq.totalBytes} = ${sum})`);
+  // Ни один кадр не превышает flush-буфер
+  ok(seq.frames.every((f) => f.length <= CAT_FLUSH_MTU), "все кадры ≤ flush-буфера 200 Б");
+}
+{
+  // Полностью пустое изображение: НОЛЬ BITMAP, весь прогон одним feed
+  const px = new Uint8Array(CAT_WIDTH * 3 * 4).fill(255);
+  const seq = buildCatFrameSequence(px, CAT_WIDTH, 3, { extraFeed: 50 });
+  const bitmaps = seq.frames.filter((f) => f[2] === CAT_CMD.BITMAP).length;
+  ok(bitmaps === 0, `пустое изображение: 0 BITMAP (${bitmaps})`);
+  ok(seq.bitmapLines === 0 && seq.fedLines === 3, `3 пустые строки ушли в прогон (${seq.fedLines})`);
+}
+{
+  // Без пустых строк — feed только в finish (прогон)
+  const px = new Uint8Array(CAT_WIDTH * 2 * 4).fill(255);
+  for (let y = 0; y < 2; y++) px.set([0, 0, 0, 255], (y * CAT_WIDTH) * 4);
+  const seq = buildCatFrameSequence(px, CAT_WIDTH, 2, { extraFeed: 50 });
+  const feeds = seq.frames.filter((f) => f[2] === CAT_CMD.FEED);
+  ok(feeds.length === 1 && feeds[0][6] === 50, `без пустых строк — один feed прогона 50 (${feeds.length})`);
 }
 
 /* --------------------------- Состояние принтера ------------------------ */

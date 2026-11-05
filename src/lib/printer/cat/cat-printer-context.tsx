@@ -41,7 +41,7 @@ import {
   trimBlankRows,
 } from "@/lib/printer/usb/raster";
 import {
-  buildCatJob,
+  buildCatFrameSequence,
   CAT_ENERGY_DEFAULT,
   CAT_EXTRA_FEED_DEFAULT,
   CAT_SPEED_DEFAULT,
@@ -66,9 +66,10 @@ const FEED_KEY = "mxw01-cat-feed";
 const CHUNK_KEY = "mxw01-cat-chunk";
 const DELAY_KEY = "mxw01-cat-delay";
 
-/** Чанк по умолчанию: thermy буферизует кадры до MTU 200 */
-const CAT_CHUNK_DEFAULT = 180;
-const CAT_DELAY_DEFAULT = 15;
+/** Flush-буфер по умолчанию: kitty-web копит кадры в буфер 200 Байт */
+const CAT_CHUNK_DEFAULT = 200;
+/** Пауза после каждого flush: kitty-web flush(): await delay(20) */
+const CAT_DELAY_DEFAULT = 20;
 
 function readLsNumber(key: string, fallback: number): number {
   try {
@@ -347,11 +348,20 @@ export function CatPrinterProvider({
       setStatus("printing");
       printingRef.current = true;
       try {
-        const job = buildCatJob(img.data, img.width, img.height, { speed, energy, extraFeed });
-        log(`cat: задание ${img.width}×${img.height}, ${job.length} Б (speed ${speed}, energy ${energy})`);
-        await tr.send(job, {
-          chunkSize,
-          chunkDelayMs,
+        // Модель kitty-web: кадры задания (с превращением пустых строк в
+        // feed) уходят буферами по 200 Байт целыми кадрами, пауза 20 мс
+        // после каждой записи и ожидание снятия паузы подачи
+        const seq = buildCatFrameSequence(img.data, img.width, img.height, {
+          speed,
+          energy,
+          extraFeed,
+        });
+        log(
+          `cat: задание ${img.width}×${img.height}: ${seq.bitmapLines} строк BITMAP, ${seq.fedLines} пустых → feed, ${seq.frames.length} кадров, ${seq.totalBytes} Б (speed ${speed}, energy ${energy})`
+        );
+        await tr.sendFrames(seq.frames, {
+          flushMtu: chunkSize,
+          flushDelayMs: chunkDelayMs,
           log,
           onProgress: (p) => {
             setProgress(p);

@@ -93,7 +93,14 @@ export function webBluetoothAvailable(): boolean {
 /* --------------------------- Состояние cat-принтера -------------------- */
 // Парсер кадров 51 78 … 01 живёт в чистом cat-модуле (общий с cat-транспортом
 // и тестами); транспорт только хранит последнее состояние и ждёт паузу.
-import { catParseState, catStateSummary, type CatPrinterState } from "../cat/cat-protocol";
+import {
+  catParseState,
+  catStateSummary,
+  CAT_FLUSH_DELAY_MS,
+  CAT_FLUSH_MTU,
+  CAT_TAIL_DRAIN_MS,
+  type CatPrinterState,
+} from "../cat/cat-protocol";
 
 /* --------------------------- Известные профили ------------------------- */
 
@@ -613,6 +620,107 @@ export class HprtBleTransport {
     opts?: { chunkSize?: number; chunkDelayMs?: number; log?: HprtLogFn }
   ): Promise<void> {
     await this.send(bytes, opts);
+  }
+
+  /**
+   * Отправка ПОСЛЕДОВАТЕЛЬНОСТИ ЦЕЛЫХ КАДРОВ — модель kitty-web (v1.0.64),
+   * закрывает отчёт «печать прошла, но принтер не начал печатать»:
+   *
+   *   - кадры копятся в буфер flushMtu (по умолчанию 200 — kitty-web
+   *     CatPrinter.mtu) ЦЕЛЫМИ; буфер уходит ОДНОЙ BLE-записью;
+   *   - после КАЖДОЙ записи — пауза flushDelayMs (20 мс, kitty-web
+   *     flush(): await delay(20));
+   *   - ПЕРЕД каждой записью (и в конце) — ожидание снятия бита pause
+   *     (0x10) из нотификаций: пока буфер принтера полен, отправка ждёт
+   *     по 100 мс (kitty-web: while (state.pause) delay(100)); бумага/
+   *     крышка/перегрев/низкий заряд — немедленный честный отказ;
+   *   - после последнего flush — дрейн CAT_TAIL_DRAIN_MS (500 мс,
+   *     kitty-web: delay(500) перед disconnect): хвост задания должен
+   *     дойти до MCU до того, как UI объявит «отправлено».
+   *
+   * Раньше (v1.0.61) поток резался на произвольные 180-байтные чанки с
+   * паузой 15 мс и проверкой паузы раз в 16 чанков (~2,9 КБ): приёмный
+   * буфер MCU переполнялся, поток байт рвался, парсер принтера терял
+   * кадры и МОЛЧА выбрасывал задание при честном на GATT-уровне тосте.
+   */
+  async sendFrames(
+    frames: readonly Uint8Array[],
+    opts?: {
+      flushMtu?: number;
+      flushDelayMs?: number;
+      onProgress?: (p: number) => void;
+      log?: HprtLogFn;
+    }
+  ): Promise<void> {
+    const ch = this.writeChar;
+    if (!this.server?.connected || !ch) throw new HprtBleError("notConnected");
+    if (this.sending) throw new HprtBleError("busy");
+    if (frames.length === 0) return;
+    this.sending = true;
+    const mtu = clampChunk(opts?.flushMtu ?? CAT_FLUSH_MTU);
+    const delayMs = clampDelay(opts?.flushDelayMs ?? CAT_FLUSH_DELAY_MS);
+    // kitty-web пишет writeValueWithoutResponse; если характеристика умеет
+    // только write — пишем с ответом (надёжнее, чуть медленнее)
+    const fast = ch.properties.writeWithoutResponse;
+    let total = 0;
+    for (const f of frames) total += f.length;
+    const buffer = new Uint8Array(mtu);
+    let size = 0;
+    let sentBytes = 0;
+    let flushes = 0;
+    try {
+      const write = async (data: Uint8Array<ArrayBuffer>): Promise<void> => {
+        try {
+          if (fast) await ch.writeValueWithoutResponse(data);
+          else await ch.writeValue(data);
+        } catch (e) {
+          throw new HprtBleError("failed", e);
+        }
+      };
+      const flush = async (): Promise<void> => {
+        // Flow-control ПЕРЕД каждой записью (kitty-web flush())
+        await this.waitForPrinterReady(opts?.log);
+        if (size === 0) return;
+        const copy = new Uint8Array(size);
+        copy.set(buffer.subarray(0, size));
+        await write(copy);
+        sentBytes += size;
+        flushes += 1;
+        size = 0;
+        opts?.onProgress?.(total > 0 ? sentBytes / total : 1);
+        if (delayMs > 0) await sleep(delayMs);
+      };
+      for (const frame of frames) {
+        if (frame.length === 0) continue;
+        if (frame.length > mtu) {
+          // В протоколе кадров больше mtu не бывает (max BITMAP = 57 Б);
+          // на случай будущего расширения — flush и запись по частям
+          await flush();
+          for (let off = 0; off < frame.length; off += mtu) {
+            const part = frame.subarray(off, Math.min(off + mtu, frame.length));
+            const copy = new Uint8Array(part.byteLength);
+            copy.set(part);
+            await write(copy);
+            sentBytes += copy.length;
+            flushes += 1;
+            opts?.onProgress?.(sentBytes / total);
+            if (delayMs > 0) await sleep(delayMs);
+          }
+          continue;
+        }
+        if (size + frame.length > mtu) await flush();
+        buffer.set(frame, size);
+        size += frame.length;
+      }
+      await flush();
+      // Дрейн: хвост задания должен дойти до MCU и дать старт печати
+      await sleep(CAT_TAIL_DRAIN_MS);
+      opts?.log?.(
+        `${stamp()} ↑ ${total} Б / ${frames.length} кадров / ${flushes} flush × ≤${mtu} Б, пауза ${delayMs} мс`
+      );
+    } finally {
+      this.sending = false;
+    }
   }
 }
 
