@@ -296,6 +296,11 @@ export function HprtPrinterProvider({
         notConnected: t("hprt.err.notConnected"),
         busy: t("hprt.err.busy"),
         failed: t("hprt.err.transferFailed"),
+        paper: t("hprt.err.paper"),
+        cover: t("hprt.err.cover"),
+        overheat: t("hprt.err.overheat"),
+        lowPower: t("hprt.err.lowPower"),
+        pause: t("hprt.err.pause"),
       };
       return map[key] ?? key;
     },

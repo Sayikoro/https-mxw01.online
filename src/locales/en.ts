@@ -803,6 +803,11 @@ export const en: Record<string, string> = {
   "hprt.err.notConnected": "Printer is not connected",
   "hprt.err.busy": "Printer is busy — wait for the current print to finish",
   "hprt.err.transferFailed": "Data transfer error",
+  "hprt.err.paper": "The printer reports: out of paper",
+  "hprt.err.cover": "The printer reports: cover is open",
+  "hprt.err.overheat": "The printer reports: overheated — wait a moment",
+  "hprt.err.lowPower": "The printer reports: battery low",
+  "hprt.err.pause": "The printer paused data intake and did not resume — check paper and battery",
   "cat.unsupported": "Web Bluetooth is unavailable in this browser. You need Chrome, Edge, Opera or the beacio extension for Safari.",
   "cat.speed": "Print speed",
   "cat.speedHint": "thermy: 35 (lower is sharper)",
@@ -816,6 +821,11 @@ export const en: Record<string, string> = {
   "cat.err.notConnected": "Printer is not connected",
   "cat.err.busy": "Printer is busy — wait for the current print",
   "cat.err.transferFailed": "Data transfer error",
+  "cat.err.paper": "The printer reports: out of paper — insert a new roll and try again",
+  "cat.err.cover": "The printer reports: cover is open — close it and try again",
+  "cat.err.overheat": "The printer reports: print head overheated — wait a couple of minutes",
+  "cat.err.lowPower": "The printer reports: battery low — charge the printer",
+  "cat.err.pause": "The printer paused data intake and did not resume — power it off and on, check paper and battery",
 
   // --- hprt.diag: Bluetooth diagnostics ---
   "hprt.diag.title": "Bluetooth diagnostics",

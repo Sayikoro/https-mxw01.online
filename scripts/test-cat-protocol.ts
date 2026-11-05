@@ -17,8 +17,10 @@ import {
   catFinishFrames,
   catLineFrame,
   catPauseFrame,
+  catParseState,
   catPrepareFrames,
   catResumeFrame,
+  catStateSummary,
   crc8,
   makeFrame,
   reverseBits,
@@ -174,6 +176,47 @@ console.log("buildCatJob");
   ok(job[job.length - 9 - 10] === 0x51 && job[job.length - 9 - 10 + 2] === CAT_CMD.FEED,
     "перед ним — feed (прогон)");
 }
+
+/* --------------------------- Состояние принтера ------------------------ */
+
+console.log("catParseState (кадры 51 78 … 01 от принтера)");
+// Пауза подачи — кадр flow-control, который присылает сам принтер
+// (kitty-web data_flow_pause = 51 78 ae 01 01 00 10 70 ff):
+{
+  const pause = [0x51, 0x78, 0xae, 0x01, 0x01, 0x00, 0x10, 0x70, 0xff];
+  const st = catParseState(pause);
+  ok(st !== null && st.pause === true && st.raw === 0x10,
+    "кадр 0xae с байтом 0x10 → pause=true");
+  ok(st !== null && catStateSummary(st).includes("пауза"),
+    `сводка паузы человекочитаема («${st ? catStateSummary(st) : ""}»)`);
+}
+// Полное «готов» от thermy resume_cmd (51 78 a3 01 01 00 00 00 ff):
+{
+  const st = catParseState(catResumeFrame());
+  ok(st !== null && !st.pause && !st.outOfPaper && !st.cover && !st.overheat && !st.lowPower && !st.busy,
+    "кадр 0xa3 c 0x00 → всё чисто (готов)");
+  ok(catStateSummary(st!) === "готов", `сводка «готов» («${catStateSummary(st!)}»)`);
+}
+// Комбинированное состояние: нет бумаги (0x01) + пауза (0x10) = 0x11
+{
+  const st = catParseState([0x51, 0x78, 0xa3, 0x01, 0x01, 0x00, 0x11, 0x63, 0xff]);
+  ok(st !== null && st.outOfPaper === true && st.pause === true,
+    "state 0x11 → нет бумаги + пауза одновременно");
+  ok(st !== null && catStateSummary(st).includes("нет бумаги"),
+    `сводка упоминает бумагу («${st ? catStateSummary(st) : ""}»)`);
+}
+// Занят (0x80) и перегрев (0x04):
+{
+  const busy = catParseState([0x51, 0x78, 0xa3, 0x01, 0x01, 0x00, 0x80, 0x47, 0xff]);
+  ok(busy !== null && busy.busy === true, "state 0x80 → busy");
+  const hot = catParseState([0x51, 0x78, 0xa3, 0x01, 0x01, 0x00, 0x04, 0x1b, 0xff]);
+  ok(hot !== null && hot.overheat === true, "state 0x04 → перегрев");
+}
+// Не кадры состояния:
+ok(catParseState(catLineFrame(new Uint8Array(48))) === null,
+  "TRANSFER-кадр (type=0) — не состояние");
+ok(catParseState([0x51, 0x78]) === null, "обрезанный кадр — не состояние");
+ok(catParseState([0xaa, 0x55, 0x17, 0x38]) === null, "чужой поток — не состояние");
 
 console.log(failures === 0 ? "\n✓ test-cat-protocol: все проверки пройдены" : `\n✗ test-cat-protocol: упало ${failures}`);
 process.exit(failures === 0 ? 0 : 1);

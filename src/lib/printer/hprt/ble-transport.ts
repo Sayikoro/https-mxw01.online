@@ -90,6 +90,11 @@ export function webBluetoothAvailable(): boolean {
   }
 }
 
+/* --------------------------- Состояние cat-принтера -------------------- */
+// Парсер кадров 51 78 … 01 живёт в чистом cat-модуле (общий с cat-транспортом
+// и тестами); транспорт только хранит последнее состояние и ждёт паузу.
+import { catParseState, catStateSummary, type CatPrinterState } from "../cat/cat-protocol";
+
 /* --------------------------- Известные профили ------------------------- */
 
 const MICROCHIP_SERVICE = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
@@ -105,8 +110,26 @@ interface KnownProfile {
   notify?: string | number;
 }
 
-/** Порядок = вероятность для мобильных этикеточников (HPRT в начале) */
+/** Порядок = вероятность для мобильных этикеточников */
 const KNOWN_PROFILES: KnownProfile[] = [
+  {
+    // v1.0.63: ae30 — сервис «котиковых» принтеров (MX10 и родня) ПО kitty-web,
+    // первоисточнику cat-протокола: печатающая пара ae01 (write) + ae02 (notify).
+    // Именно на ae30 падают MX10-клоны (его же требует и MXW01-драйвер — см.
+    // подсказку «переключитесь на MX10 (cat)»), поэтому для cat-транспорта он
+    // ПЕРВЫЙ. Для HPRT-устройств сервиса нет — просто skip.
+    name: "AE30 (cat MX10, kitty-web)",
+    service: 0xae30,
+    writes: [0xae01],
+    notify: 0xae02,
+  },
+  {
+    // af30 — альтернативный сервис той же пары (macOS-вариант из драйвера MXW01)
+    name: "AF30 (cat alt)",
+    service: 0xaf30,
+    writes: [0xae01],
+    notify: 0xae02,
+  },
   {
     name: "FF00 (HPRT / serial port)",
     service: 0xff00,
@@ -151,6 +174,8 @@ const KNOWN_PROFILES: KnownProfile[] = [
  * (строчными; Web Bluetooth требует нижний регистр).
  */
 export const HPRT_OPTIONAL_SERVICES: (string | number)[] = [
+  0xae30, // v1.0.63: cat-принтеры (MX10 и родня) — kitty-web CAT_PRINT_SRV
+  0xaf30, // v1.0.63: альтернативный рекламируемый сервис cat-принтеров
   0xff00,
   0xffe0,
   0xffe5,
@@ -185,6 +210,7 @@ export interface DiscoveredService {
 }
 
 export type HprtLogFn = (line: string) => void;
+export type HprtCatStateFn = (state: CatPrinterState) => void;
 
 /* ------------------------------ Хелперы -------------------------------- */
 
@@ -206,7 +232,20 @@ function stamp(): string {
 /** Ошибка транспорта с машинным ключом — контекст переводит в тост */
 export class HprtBleError extends Error {
   constructor(
-    public key: "cancelled" | "noApi" | "noGatt" | "noProfile" | "notConnected" | "busy" | "failed",
+    public key:
+      | "cancelled"
+      | "noApi"
+      | "noGatt"
+      | "noProfile"
+      | "notConnected"
+      | "busy"
+      | "failed"
+      // v1.0.63 — честные состояния «котикового» принтера (кадры 51 78 … 01):
+      | "paper"
+      | "cover"
+      | "overheat"
+      | "lowPower"
+      | "pause",
     cause?: unknown
   ) {
     super(`hprt-ble:${key}`);
@@ -255,9 +294,18 @@ export class HprtBleTransport {
   profile: BleProfileInfo | null = null;
   /** Вызывается при gattserverdisconnected (принтер выключили/ушёл) */
   onDisconnected: (() => void) | null = null;
+  /** Последнее состояние «котикового» принтера из нотификаций (или null) */
+  private catState: CatPrinterState | null = null;
+  /** Вызывается при каждом кадре состояния 51 78 … 01 (журнал/diagnostics) */
+  onCatState: HprtCatStateFn | null = null;
 
   isConnected(): boolean {
     return !!this.server?.connected && !!this.writeChar;
+  }
+
+  /** Последнее состояние «котикового» принтера (null — принтер молчал) */
+  lastCatState(): CatPrinterState | null {
+    return this.catState;
   }
 
   deviceName(): string | null {
@@ -289,6 +337,7 @@ export class HprtBleTransport {
       this.server = null;
       this.writeChar = null;
       this.profile = null;
+      this.catState = null;
       this.onDisconnected?.();
     });
     log?.(`${stamp()} ✓ device: ${device.name ?? device.id}`);
@@ -314,7 +363,22 @@ export class HprtBleTransport {
         await found.notify.startNotifications();
         found.notify.addEventListener("characteristicvaluechanged", (ev) => {
           const dv = (ev.target as { value?: DataView })?.value;
-          if (dv) log?.(`${stamp()} ← ${hex(dv)}`);
+          if (!dv) return;
+          log?.(`${stamp()} ← ${hex(dv)}`);
+          // Кадры состояния «котикового» принтера (51 78 … 01): бумага,
+          // крышка, перегрев, пауза подачи. Для остальных принтеров (TSPL,
+          // HPRT) кадр не совпадёт — парсер вернёт null.
+          const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+          const state = catParseState(bytes);
+          if (state) {
+            const changed =
+              !this.catState || this.catState.raw !== state.raw;
+            this.catState = state;
+            if (changed) {
+              log?.(`${stamp()} ← состояние принтера: ${catStateSummary(state)}`);
+              this.onCatState?.(state);
+            }
+          }
         });
         log?.(`${stamp()} ✓ notify ${found.info.notifyUuid}`);
       } catch {
@@ -410,6 +474,7 @@ export class HprtBleTransport {
     this.server = null;
     this.writeChar = null;
     this.profile = null;
+    this.catState = null;
     if (server?.connected) {
       try {
         server.disconnect();
@@ -421,6 +486,30 @@ export class HprtBleTransport {
   }
 
   /**
+   * Ждать, пока принтер снимет паузу подачи (кадры 51 78 … 01, бит 0x10 —
+   * буфер печати полон — так делает kitty-web: while (state.pause) delay).
+   * Без этого пот streamed задание переполняет буфер принтера: модуль
+   * теряет байты, парсер теряет кадры — принтер молчит при честном тосте
+   * «отправлено» (ровно тот отчёт, что привёл к v1.0.63).
+   */
+  private async waitForPrinterReady(log?: HprtLogFn): Promise<void> {
+    const st = this.catState;
+    if (!st) return;
+    if (st.outOfPaper) throw new HprtBleError("paper");
+    if (st.cover) throw new HprtBleError("cover");
+    if (st.overheat) throw new HprtBleError("overheat");
+    if (st.lowPower) throw new HprtBleError("lowPower");
+    if (!st.pause) return;
+    let waits = 0;
+    log?.(`${stamp()} ⏸ принтер приостановил приём (буфер полон) — ждём…`);
+    while (this.catState?.pause) {
+      if (++waits > 200) throw new HprtBleError("pause"); // ~20 с
+      await sleep(100);
+    }
+    log?.(`${stamp()} ▶ пауза снята — продолжаем`);
+  }
+
+  /**
    * Отправка потока команд чанками с паузой (по умолчанию 15 мс — см.
    * HPRT_DELAY_DEFAULT): дешёвые BLE-модули принтеров теряют байты при
    * сплошном потоке writeWithoutResponse, и TSPL-задание молча отбрасывается
@@ -428,6 +517,9 @@ export class HprtBleTransport {
    * event loop — UI не подвисает на длинных растрах. После последнего чанка
    * — дренажная пауза HPRT_TAIL_DRAIN_MS: «отправлено» означает, что хвост
    * (PRINT) покинул модуль, а не застрял в его буфере.
+   *
+   * v1.0.63: перед стартом и между чанками ждём снятия паузы подачи и
+   * честно отказываем при бумаге/крышке/перегреве (кадры 51 78 … 01).
    */
   async send(
     bytes: Uint8Array,
@@ -449,6 +541,7 @@ export class HprtBleTransport {
     let sent = 0;
     let chunks = 0;
     try {
+      await this.waitForPrinterReady(opts?.log);
       for (let off = 0; off < bytes.length; off += chunkSize) {
         const part = bytes.subarray(off, Math.min(off + chunkSize, bytes.length));
         // Свежий Uint8Array — BufferSource без «хвоста» родительского буфера
@@ -465,9 +558,12 @@ export class HprtBleTransport {
         opts?.onProgress?.(sent / bytes.length);
         if (delayMs > 0) await sleep(delayMs);
         else if ((chunks & 31) === 0) await sleep(0);
+        // Принтер забрал часть строк — мог сообщить паузу/состояние:
+        if ((chunks & 15) === 0) await this.waitForPrinterReady(opts?.log);
       }
       // Дренаж: хвост потока (PRINT) должен дойти до MCU принтера до
       // «отправлено», иначе задание может остаться в буфере модуля
+      await this.waitForPrinterReady(opts?.log);
       await sleep(HPRT_TAIL_DRAIN_MS);
       opts?.log?.(`${stamp()} ↑ ${bytes.length} B / ${chunks} чанков × ${chunkSize}, пауза ${delayMs} мс`);
     } finally {

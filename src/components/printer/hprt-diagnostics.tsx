@@ -26,7 +26,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useHprtPrinter } from "@/lib/printer/hprt/hprt-printer-context";
-import { HPRT_CHUNK_MAX, HPRT_CHUNK_MIN } from "@/lib/printer/hprt/ble-transport";
+import { useCatPrinter } from "@/lib/printer/cat/cat-printer-context";
+import { HPRT_CHUNK_MAX, HPRT_CHUNK_MIN, type BleProfileInfo, type DiscoveredService } from "@/lib/printer/hprt/ble-transport";
 import type { Translator } from "@/lib/printer/i18n";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -83,38 +84,102 @@ function hexToBytes(raw: string): Uint8Array | null {
   return out;
 }
 
+/**
+ * Общий адаптер сессии: один и тот же диалог работает и с HPRT-транспортом,
+ * и с cat (MX10) — v1.0.63: раньше логи cat-подключения (профиль ae30,
+ * кадры состояния, паузы) не показывались нигде, и «молчащий» принтер
+ * было не отладить.
+ */
+interface DiagSession {
+  supported: boolean;
+  status: string;
+  profile: BleProfileInfo | null;
+  logs: string[];
+  clearLogs: () => void;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  enumerate: () => Promise<DiscoveredService[]>;
+  sendRaw: (bytes: Uint8Array) => Promise<void>;
+  printCanvas: (canvas: HTMLCanvasElement) => Promise<void>;
+  chunkSize: number;
+  setChunkSize: (n: number) => void;
+  chunkDelayMs: number;
+  setChunkDelayMs: (n: number) => void;
+  unsupportedText: string;
+}
+
 export function HprtDiagnosticsDialog({
   t,
   open,
   onOpenChange,
+  source = "hprt",
 }: {
   t: Translator;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Чей транспорт/журнал показываем: HPRT (по умолчанию) или cat (MX10) */
+  source?: "hprt" | "cat";
 }) {
   const hprt = useHprtPrinter();
+  const cat = useCatPrinter();
+  const session: DiagSession =
+    source === "cat"
+      ? {
+          supported: cat.supported,
+          status: cat.status,
+          profile: cat.profile,
+          logs: cat.logs,
+          clearLogs: cat.clearLogs,
+          connect: cat.connect,
+          disconnect: cat.disconnect,
+          enumerate: cat.enumerate,
+          sendRaw: cat.sendRaw,
+          printCanvas: cat.printCanvas,
+          chunkSize: cat.chunkSize,
+          setChunkSize: cat.setChunkSize,
+          chunkDelayMs: cat.chunkDelayMs,
+          setChunkDelayMs: cat.setChunkDelayMs,
+          unsupportedText: t("cat.unsupported"),
+        }
+      : {
+          supported: hprt.supported,
+          status: hprt.status,
+          profile: hprt.profile,
+          logs: hprt.logs,
+          clearLogs: hprt.clearLogs,
+          connect: hprt.connect,
+          disconnect: hprt.disconnect,
+          enumerate: hprt.enumerate,
+          sendRaw: hprt.sendRaw,
+          printCanvas: hprt.printCanvas,
+          chunkSize: hprt.chunkSize,
+          setChunkSize: hprt.setChunkSize,
+          chunkDelayMs: hprt.chunkDelayMs,
+          setChunkDelayMs: hprt.setChunkDelayMs,
+          unsupportedText: t("hprt.unsupported"),
+        };
   const { toast } = useToast();
   const [hexMode, setHexMode] = useState(false);
   const [rawText, setRawText] = useState("");
-  const [services, setServices] = useState<Awaited<ReturnType<typeof hprt.enumerate>> | null>(null);
+  const [services, setServices] = useState<DiscoveredService[] | null>(null);
   const [enumerating, setEnumerating] = useState(false);
   const [sending, setSending] = useState(false);
   const [testing, setTesting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const connected = hprt.status === "connected" || hprt.status === "printing";
-  const busy = hprt.status === "connecting" || hprt.status === "printing";
+  const connected = session.status === "connected" || session.status === "printing";
+  const busy = session.status === "connecting" || session.status === "printing";
 
   const refreshServices = useCallback(async () => {
     setEnumerating(true);
     try {
-      setServices(await hprt.enumerate());
+      setServices(await session.enumerate());
     } catch (e) {
       toast({ title: (e as Error)?.message ?? "?", variant: "destructive" });
     } finally {
       setEnumerating(false);
     }
-  }, [hprt, toast]);
+  }, [session, toast]);
 
   /* Открытие диалога с уже подключённым принтером — карта сервисов сразу */
   useEffect(() => {
@@ -125,7 +190,7 @@ export function HprtDiagnosticsDialog({
 
   const handleConnect = useCallback(async () => {
     try {
-      await hprt.connect();
+      await session.connect();
       setServices(null);
     } catch (e) {
       // Отмена выбора устройства — не ошибка, тихо закрываем процесс
@@ -133,12 +198,12 @@ export function HprtDiagnosticsDialog({
         toast({ title: (e as Error)?.message ?? "?", variant: "destructive" });
       }
     }
-  }, [hprt, toast]);
+  }, [session, toast]);
 
   const handleDisconnect = useCallback(async () => {
-    await hprt.disconnect();
+    await session.disconnect();
     setServices(null);
-  }, [hprt]);
+  }, [session]);
 
   const handleSendRaw = useCallback(async () => {
     const bytes = hexMode ? hexToBytes(rawText) : textToBytes(rawText);
@@ -148,14 +213,14 @@ export function HprtDiagnosticsDialog({
     }
     setSending(true);
     try {
-      await hprt.sendRaw(bytes);
+      await session.sendRaw(bytes);
       toast({ title: t("hprt.diag.sent"), description: `${bytes.length} B` });
     } catch (e) {
       toast({ title: (e as Error)?.message ?? "?", variant: "destructive" });
     } finally {
       setSending(false);
     }
-  }, [hexMode, hprt, rawText, t, toast]);
+  }, [hexMode, rawText, session, t, toast]);
 
   /** Тестовая этикетка 384×100: рамка + текст + полосы, TSPL-растр 384 точки */
   const handleTestLabel = useCallback(async () => {
@@ -180,7 +245,7 @@ export function HprtDiagnosticsDialog({
       for (let i = 0; i < 8; i++) {
         ctx.fillRect(24 + i * 42, 76, 26, 12);
       }
-      await hprt.printCanvas(canvas);
+      await session.printCanvas(canvas);
       toast({ title: t("it.printSent") });
     } catch (e) {
       toast({
@@ -191,7 +256,7 @@ export function HprtDiagnosticsDialog({
     } finally {
       setTesting(false);
     }
-  }, [hprt, t, toast]);
+  }, [session, t, toast]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -220,14 +285,14 @@ export function HprtDiagnosticsDialog({
             type="button"
             size="sm"
             data-testid="hprt-diag-connect"
-            disabled={busy || (!connected && !hprt.supported)}
+            disabled={busy || (!connected && !session.supported)}
             onClick={() => void (connected ? handleDisconnect() : handleConnect())}
             className={cn(
               "h-8 flex-1 gap-1.5 rounded-lg text-xs font-medium text-white",
               connected ? "bg-violet-600 hover:bg-violet-700" : "bg-slate-900 hover:bg-slate-700"
             )}
           >
-            {hprt.status === "connecting" ? (
+            {session.status === "connecting" ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <BluetoothConnected className="h-3.5 w-3.5" />
@@ -249,20 +314,20 @@ export function HprtDiagnosticsDialog({
             </Button>
           )}
         </div>
-        {!hprt.supported && (
-          <p className="text-[11px] text-red-500">{t("hprt.unsupported")}</p>
+        {!session.supported && (
+          <p className="text-[11px] text-red-500">{session.unsupportedText}</p>
         )}
 
         {/* Профиль печати */}
         <div className="rounded-lg bg-muted p-2.5 text-xs" data-testid="hprt-diag-profile">
           <div className="font-semibold text-slate-700 dark:text-slate-200">
-            {t("hprt.diag.profile")}: {hprt.profile?.name ?? t("hprt.diag.profileNone")}
+            {t("hprt.diag.profile")}: {session.profile?.name ?? t("hprt.diag.profileNone")}
           </div>
-          {hprt.profile && (
+          {session.profile && (
             <div className="mt-1 space-y-0.5 font-mono text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-              <div>service: {hprt.profile.serviceUuid}</div>
-              <div>write: {hprt.profile.writeUuid} ({hprt.profile.writeWithoutResponse ? "wo/resp" : "w/resp"})</div>
-              {hprt.profile.notifyUuid && <div>notify: {hprt.profile.notifyUuid}</div>}
+              <div>service: {session.profile.serviceUuid}</div>
+              <div>write: {session.profile.writeUuid} ({session.profile.writeWithoutResponse ? "wo/resp" : "w/resp"})</div>
+              {session.profile.notifyUuid && <div>notify: {session.profile.notifyUuid}</div>}
             </div>
           )}
         </div>
@@ -336,19 +401,21 @@ export function HprtDiagnosticsDialog({
                   {m.toUpperCase()}
                 </button>
               ))}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                data-testid="hprt-diag-template"
-                onClick={() => {
-                  setHexMode(false);
-                  setRawText(TSPL_SAMPLE);
-                }}
-                className="h-6 rounded-full px-2 text-[11px] font-medium text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-              >
-                TSPL
-              </Button>
+              {source === "hprt" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  data-testid="hprt-diag-template"
+                  onClick={() => {
+                    setHexMode(false);
+                    setRawText(TSPL_SAMPLE);
+                  }}
+                  className="h-6 rounded-full px-2 text-[11px] font-medium text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  TSPL
+                </Button>
+              )}
             </div>
           </div>
           <textarea
@@ -408,9 +475,9 @@ export function HprtDiagnosticsDialog({
           <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300">
             {t("hprt.diag.chunk")}
             <select
-              value={hprt.chunkSize}
+              value={session.chunkSize}
               data-testid="hprt-diag-chunk"
-              onChange={(e) => hprt.setChunkSize(Number(e.target.value))}
+              onChange={(e) => session.setChunkSize(Number(e.target.value))}
               className={numCls}
             >
               {[20, 52, 64, 100, 180, 512]
@@ -425,9 +492,9 @@ export function HprtDiagnosticsDialog({
           <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300">
             {t("hprt.diag.delay")}
             <select
-              value={hprt.chunkDelayMs}
+              value={session.chunkDelayMs}
               data-testid="hprt-diag-delay"
-              onChange={(e) => hprt.setChunkDelayMs(Number(e.target.value))}
+              onChange={(e) => session.setChunkDelayMs(Number(e.target.value))}
               className={numCls}
             >
               {[0, 5, 10, 15, 20, 50].map((n) => (
@@ -450,7 +517,7 @@ export function HprtDiagnosticsDialog({
               size="sm"
               variant="ghost"
               data-testid="hprt-diag-log-clear"
-              onClick={hprt.clearLogs}
+              onClick={session.clearLogs}
               className="h-6 gap-1 rounded-lg px-2 text-[11px] font-medium text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             >
               <Eraser className="h-3 w-3" />
@@ -461,10 +528,10 @@ export function HprtDiagnosticsDialog({
             className="max-h-40 overflow-auto rounded-lg bg-slate-950 p-2.5 font-mono text-[10px] leading-relaxed text-slate-100"
             data-testid="hprt-diag-log"
           >
-            {hprt.logs.length === 0 ? (
+            {session.logs.length === 0 ? (
               <span className="text-slate-500">{t("hprt.diag.logEmpty")}</span>
             ) : (
-              hprt.logs.map((line, i) => <div key={i}>{line}</div>)
+              session.logs.map((line, i) => <div key={i}>{line}</div>)
             )}
           </div>
         </div>

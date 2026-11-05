@@ -1,6 +1,6 @@
 # История изменений — MXW01 Web Terminal
 
-**Текущая версия: 1.0.62**
+**Текущая версия: 1.0.63**
 
 Правила нумерации: большое изменение увеличивает основную версию (0.1 → 0.2 → …), мелкие изменения группируются в подверсии (0.2.1, 0.2.2, …).
 
@@ -746,6 +746,21 @@
 - site.ts 1.0.59; public/sw.js → mxw01-pwa-v23.
 - Тесты: v156 расширен (мастер: при новом релизе и отсутствующей панели показывается инструкция + прямая ссылка на кит + «Проверить снова»; версии подняты до 1.0.59); test-php-update-git.sh 42/42, test-php-update.sh 27/27, test-admin.sh 46/46.
 - Правки: src/components/printer/app-header.tsx (мастер обновления), src/locales/ru.ts + en.ts (ключи set.upd*), src/lib/printer/site.ts, public/sw.js, scripts/php-update/index.php (PANEL_VERSION), scripts/v156-update-check.js, versions.md.
+
+### 1.0.63 — MX10 молчит при «успешной» печати: сервис ae30 + flow-control (kitty-web)
+
+- Живой отчёт пользователя (продолжение 1.0.62): после переключения на «MX10 (cat)» печать «прошла» (честный на GATT-уровне тост), но принтер не начал печатать. Разбор по трём первоисточникам (mazoqui/thermy, NaitLee/Cat-Printer, NaitLee/kitty-printer — веб-первоисточник cat-протокола):
+  1) kitty-web печатает через GATT-сервис ae30 (CAT_PRINT_SRV), tx ae01 / rx ae02 — а в нашем транспорте ae30/af30 не было НИ в optionalServices, НИ в профилях: у реального клона с единственным сервисом ae30 транспорт падал в noProfile или писал не в ту характеристику (ae00/ab00/ff00-подобные), принтер молчал;
+  2) kitty-web подписывается на notify ae02 и разбирает кадры состояния 51 78 … 01: бит 0x10 = «пауза подачи (буфер полон)» — flush() ЖДЁТ снятия паузы; у нас подписка была (логи), но паузу никто не ждал — сплошной поток переполнял буфер принтера, байты терялись, задание выбрасывалось;
+  3) NaitLee/Cat-Printer: у MX05…MX10 команда feed (0xa1) работает плохо (problem_feeding) — пока оставлена (как в kitty-web), прокачивается настройкой.
+- Транспорт (hprt/ble-transport.ts): в optionalServices добавлены 0xae30 и 0xaf30; НОВЫЕ профили AE30 (cat MX10, kitty-web) → первый в списке, и AF30 (cat alt); подписка на notify теперь разбирает кадры состояния (catParseState из чистого cat-модуля): журнал получает человекочитаемую строку «состояние принтера: …», контекст — колбэк onCatState; send() перед стартом и каждые 16 чанков ЖДЁТ снятия паузы (до ~20 с, дальше честная ошибка pause), а бумага/крышка/перегрев/низкий заряд дают немедленный отказ с конкретным текстом (новые ключи HprtBleError: paper/cover/overheat/lowPower/pause).
+- Тестовая страница в шапке печатает АКТИВНЫМ транспортом (v1.0.63): раньше handleTestPage всегда шла через MXW01-драйвер, и пользователь на cat получал «не ответил на команды MXW01» прямо из Настроек; теперь диспетчеризация cat/hprt/usb/ble как во вкладках.
+- Диагностика Bluetooth теперь понимает источник «cat»: диалог HprtDiagnosticsDialog получил проп source («hprt» | «cat») с адаптером сессии — из блока MX10 открывается с логами cat-транспорта (профиль AE30, кадры состояния, паузы), подключением/raw-консолью/чанком cat-контекста; раньше логи cat-подключения не показывались НИГДЕ, «молчащий» принтер было не отладить; TSPL-шаблон скрыт для cat.
+- cat-protocol.ts: НОВЫЕ чистые функции catParseState (битовая маска состояния из кадра-ответа: outOfPaper 0x01, cover 0x02, overheat 0x04, lowPower 0x08, pause 0x10, busy 0x80) и catStateSummary (сводка для журнала).
+- Локали RU/EN: cat.err.paper / cover / overheat / lowPower / pause и hprt-аналоги (честные тексты состояний принтера).
+- site.ts 1.0.63; public/sw.js → mxw01-pwa-v27; PANEL_VERSION → 1.0.63.
+- Тесты: НОВЫЙ scripts/v163-mx10-ae30.js (Playwright, 15 проверок, СТРОГИЙ стаб GATT — только сервис ae30, как у реального клона: подключение → профиль AE30 (cat MX10, kitty-web) в журнале; печать тест-страницы при выставленной принтером ПАУЗЕ → отправка ждёт (≥1,5 с), после resume-кадра задание доехало целиком (хвост get_device_state, 365 BITMAP-кадров, 20 КБ); «нет бумаги» до печати → тост про бумагу и НОЛЬ байт в характеристики; регресс — принтер с сервисом ae00 (thermy-профиль) подключается); test-cat-protocol.ts расширен до 43 проверок (catParseState: кадр 0xae-паузы, «готов», комбинированные состояния, busy/перегрев, отсечение чужих кадров); регресс v156/v158/v159/v160/v162 зелёные, PHP-сьюты 27/27, 42/42, 46/46; tsc — 0 ошибок в src, eslint чисто.
+- Правки: src/lib/printer/cat/cat-protocol.ts, src/lib/printer/cat/cat-printer-context.tsx, src/lib/printer/hprt/ble-transport.ts, src/lib/printer/hprt/hprt-printer-context.tsx, src/components/printer/hprt-diagnostics.tsx (проп source), src/components/printer/app-header.tsx (тест-страница по транспорту, diagSource), src/locales/ru.ts + en.ts, scripts/v163-mx10-ae30.js, versions.md.
 
 ### 1.0.62 — Подсказка «это не MXW01, а котиковый принтер» (MX10-клоны в MXW01-диалоге)
 

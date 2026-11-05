@@ -181,6 +181,60 @@ export function catFinishFrames(extraFeed: number): Uint8Array[] {
   ];
 }
 
+/* ------------------------------ Состояние ------------------------------ */
+
+/**
+ * Состояние принтера из нотификации (kitty-web CatPrinter.notify):
+ * принтер сам присылает кадры 51 78 <cmd> 01 … <state> … ff, где state —
+ * битовая маска. Важнейший бит — pause (0x10): буфер принтера полон,
+ * отправка обязана ждать (kitty-web flush(): while (state.pause) delay).
+ */
+export interface CatPrinterState {
+  /** Нет бумаги */
+  outOfPaper: boolean;
+  /** Открыта крышка */
+  cover: boolean;
+  /** Перегрев головки */
+  overheat: boolean;
+  /** Низкий заряд батареи */
+  lowPower: boolean;
+  /** Пауза подачи (буфер полон) — поток данных надо приостановить */
+  pause: boolean;
+  /** Занят обработкой */
+  busy: boolean;
+  /** Сырой байт состояния */
+  raw: number;
+}
+
+/** state-байт: (frame[6]) из кадра-ответа 51 78 … 01 …; null — не кадр состояния */
+export function catParseState(frame: ArrayLike<number>): CatPrinterState | null {
+  if (frame.length < 7) return null;
+  if (frame[0] !== 0x51 || frame[1] !== 0x78) return null;
+  if ((frame[3] & 0xff) !== CAT_TYPE_RESPONSE) return null;
+  const s = frame[6] & 0xff;
+  return {
+    outOfPaper: !!(s & 0x01),
+    cover: !!(s & 0x02),
+    overheat: !!(s & 0x04),
+    lowPower: !!(s & 0x08),
+    pause: !!(s & 0x10),
+    busy: !!(s & 0x80),
+    raw: s,
+  };
+}
+
+/** Короткая человекочитаемая сводка состояния (для журнала диагностики) */
+export function catStateSummary(state: CatPrinterState): string {
+  const parts: string[] = [];
+  if (state.pause) parts.push("пауза (буфер полон)");
+  if (state.busy) parts.push("обработка");
+  if (state.outOfPaper) parts.push("нет бумаги");
+  if (state.cover) parts.push("крышка");
+  if (state.overheat) parts.push("перегрев");
+  if (state.lowPower) parts.push("низкий заряд");
+  return parts.length ? parts.join(", ") : "готов";
+}
+
 /* ------------------------------ Растр ---------------------------------- */
 
 export interface CatBitmap {

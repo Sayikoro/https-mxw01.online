@@ -408,6 +408,8 @@ export function AppHeader({
   const [changelogOpen, setChangelogOpen] = useState(false);
   /* Диагностика Bluetooth (HPRT): вход из списка принтера и из Настроек */
   const [hprtDiagOpen, setHprtDiagOpen] = useState(false);
+  /* Чей транспорт показывает Диагностика Bluetooth: hprt или cat (MX10, v1.0.63) */
+  const [diagSource, setDiagSource] = useState<"hprt" | "cat">("hprt");
   /* Секретная мини-игра: 5 тапов по версии с паузой не более 2.5 с между ними */
   const [gameOpen, setGameOpen] = useState(false);
   const versionClicksRef = useRef({ n: 0, last: 0 });
@@ -606,12 +608,24 @@ export function AppHeader({
     }
     setTestPrinting(true);
     try {
-      if (status !== "connected") {
-        toast({ title: t("common.connecting") });
-        await connect();
-      }
       const { canvas } = renderTestPage();
-      await printCanvas(canvas);
+      /* v1.0.63: тест-страница печатает АКТИВНЫМ транспортом (как вкладки
+       * ленты/ценников) — раньше она всегда шла через MXW01, и пользователь
+       * с MX10 получал «не ответил на команды MXW01» прямо из Настроек */
+      const transport = usb.transport;
+      if (transport === "cat") {
+        await cat.printCanvas(canvas); // сам подключит при необходимости
+      } else if (transport === "hprt") {
+        await hprt.printCanvas(canvas);
+      } else if (transport === "usb") {
+        await usb.printCanvas(canvas);
+      } else {
+        if (status !== "connected") {
+          toast({ title: t("common.connecting") });
+          await connect();
+        }
+        await printCanvas(canvas);
+      }
       notePrintedMm(canvas.height / PX_PER_MM);
       toast({ title: t("it.printSent") });
     } catch (e) {
@@ -859,7 +873,7 @@ export function AppHeader({
           <TransportSelect
             t={t}
             onConnectAll={handleConnectUsb}
-            onOpenDiagnostics={() => setHprtDiagOpen(true)}
+            onOpenDiagnostics={() => { setDiagSource("hprt"); setHprtDiagOpen(true); }}
           />
 
           {bleConnected ? (
@@ -1380,7 +1394,7 @@ export function AppHeader({
                   size="sm"
                   data-testid="hprt-diagnostics-open"
                   className="h-8 w-full gap-1.5 rounded-lg text-xs font-medium"
-                  onClick={() => setHprtDiagOpen(true)}
+                  onClick={() => { setDiagSource("hprt"); setHprtDiagOpen(true); }}
                 >
                   <Printer className="h-3.5 w-3.5" />
                   {t("set.hprtDiagnostics")}
@@ -1463,7 +1477,7 @@ export function AppHeader({
                   size="sm"
                   data-testid="cat-diagnostics-open"
                   className="h-8 w-full gap-1.5 rounded-lg text-xs font-medium"
-                  onClick={() => setHprtDiagOpen(true)}
+                  onClick={() => { setDiagSource("cat"); setHprtDiagOpen(true); }}
                 >
                   <Cat className="h-3.5 w-3.5" />
                   {t("set.catDiagnostics")}
@@ -2013,7 +2027,7 @@ export function AppHeader({
       <ChangelogDialog t={t} open={changelogOpen} onOpenChange={setChangelogOpen} />
       <GameDialog t={t} open={gameOpen} onOpenChange={setGameOpen} />
       {/* Диагностика Bluetooth (HPRT): сервисы GATT, raw-консоль, тест-этикетка */}
-      <HprtDiagnosticsDialog t={t} open={hprtDiagOpen} onOpenChange={setHprtDiagOpen} />
+      <HprtDiagnosticsDialog t={t} open={hprtDiagOpen} onOpenChange={setHprtDiagOpen} source={diagSource} />
       {/* Ctrl/Cmd+S на сайте → диалог скачивания офлайн-версии */}
       <OfflineSaveManager t={t} />
     </header>

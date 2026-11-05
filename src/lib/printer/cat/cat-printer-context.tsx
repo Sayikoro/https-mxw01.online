@@ -46,6 +46,7 @@ import {
   CAT_EXTRA_FEED_DEFAULT,
   CAT_SPEED_DEFAULT,
   CAT_WIDTH,
+  catStateSummary,
 } from "./cat-protocol";
 
 /* ------------------------------- Типы ---------------------------------- */
@@ -230,9 +231,14 @@ export function CatPrinterProvider({
         setProfile(null);
         setDeviceName(null);
       };
+      // Кадры состояния 51 78 … 01 (бумага/крышка/пауза) — в журнал
+      // диагностики: без них «молчаливый» принтер необъясним
+      transportRef.current.onCatState = (state) => {
+        log(`принтер: ${catStateSummary(state)}`);
+      };
     }
     return transportRef.current;
-  }, []);
+  }, [log]);
 
   const translateError = useCallback(
     (key: HprtBleError["key"]): string => {
@@ -244,6 +250,11 @@ export function CatPrinterProvider({
         notConnected: t("cat.err.notConnected"),
         busy: t("cat.err.busy"),
         failed: t("cat.err.transferFailed"),
+        paper: t("cat.err.paper"),
+        cover: t("cat.err.cover"),
+        overheat: t("cat.err.overheat"),
+        lowPower: t("cat.err.lowPower"),
+        pause: t("cat.err.pause"),
       };
       return map[key] ?? key;
     },
@@ -262,6 +273,8 @@ export function CatPrinterProvider({
       setProfile(tr.profile);
       setStatus("connected");
       log(`${name || "MX10"} — готов к печати (cat-протокол)`);
+      const st = tr.lastCatState();
+      if (st) log(`принтер: ${catStateSummary(st)}`);
     } catch (e) {
       setStatus("disconnected");
       if (e instanceof HprtBleError) {

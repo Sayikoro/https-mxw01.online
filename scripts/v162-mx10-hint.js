@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 /**
- * Playwright v1.0.62 — подсказка «это не MXW01, а котиковый принтер».
+ * Playwright v1.0.63 — подсказка «это не MXW01, а котиковый принтер».
  * Запуск: NODE_PATH=$(npm root -g) timeout 180 node scripts/v162-mx10-hint.js
  * (BASE_URL по умолчанию http://localhost:3000 — поднимите php -S -t .next-static)
  *
  * Реальный сценарий пользователя: MX10-подобный клон попадает в MXW01-диалог
  * (рекламирует ae30), подключение «успешно» (драйвер глотает ошибку статуса),
  * но при ПЕЧАТИ requestStatus (0xa1) молчит 5 с → «Timeout waiting for
- * notification 0xa1» в тосте. В v1.0.62:
+ * notification 0xa1» в тосте. В v1.0.63:
  *   1. printCanvas распознаёт фирменный таймаут и вместо сырой ошибки
  *      показывает подсказку pc.maybeCatHint;
  *   2. в шапке баннер «Похоже, это котиковый принтер» с кнопкой

@@ -788,6 +788,11 @@ export const ru: Record<string, string> = {
   "cat.err.notConnected": "Принтер не подключён",
   "cat.err.busy": "Принтер занят — дождитесь окончания печати",
   "cat.err.transferFailed": "Ошибка передачи данных",
+  "cat.err.paper": "Принтер сообщает: закончилась бумага — вставьте рулон и попробуйте снова",
+  "cat.err.cover": "Принтер сообщает: открыта крышка — закройте её и попробуйте снова",
+  "cat.err.overheat": "Принтер сообщает: перегрев головки — подождите пару минут",
+  "cat.err.lowPower": "Принтер сообщает: низкий заряд батареи — зарядите принтер",
+  "cat.err.pause": "Принтер приостановил приём данных и не продолжил — выключите и включите его, проверьте бумагу и заряд",
   "diag.hprtDriver": "Web Bluetooth (HprtBleTransport)",
   "diag.hprtTransport": "Web Bluetooth LE (автопрофиль GATT)",
   "diag.hprtProfile": "Профиль GATT",
@@ -818,6 +823,11 @@ export const ru: Record<string, string> = {
   "hprt.err.notConnected": "Принтер не подключён",
   "hprt.err.busy": "Принтер занят — дождитесь окончания печати",
   "hprt.err.transferFailed": "Ошибка передачи данных",
+  "hprt.err.paper": "Принтер сообщает: закончилась бумага",
+  "hprt.err.cover": "Принтер сообщает: открыта крышка",
+  "hprt.err.overheat": "Принтер сообщает: перегрев — подождите",
+  "hprt.err.lowPower": "Принтер сообщает: низкий заряд батареи",
+  "hprt.err.pause": "Принтер приостановил приём данных и не продолжил — проверьте бумагу и заряд",
 
   // --- hprt.diag: диагностика Bluetooth ---
   "hprt.diag.title": "Диагностика Bluetooth",
