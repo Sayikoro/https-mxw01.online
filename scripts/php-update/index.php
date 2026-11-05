@@ -48,7 +48,7 @@ define('GH_API', rtrim((string)(getenv('MXW01_GH_API') ?: 'https://api.github.co
    имеют приоритет, но Git-кнопка работает и без ручной настройки - */
 define('DEFAULT_REPO', 'Sayikoro/https-mxw01.online');
 /* - версия самой панели (показывается внизу страницы, чтобы отличать старую панель от новой) - */
-define('PANEL_VERSION', '1.0.64');
+define('PANEL_VERSION', '1.0.65');
 
 /* ------------------------------ помощники ------------------------------ */
 

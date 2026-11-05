@@ -17,6 +17,7 @@ import {
   CAT_FLUSH_DELAY_MS,
   CAT_FLUSH_MTU,
   CAT_SPEED_DEFAULT,
+  CAT_TOP_RUNUP,
   bytesFromInt,
   buildCatFrameSequence,
   buildCatJob,
@@ -44,6 +45,12 @@ function ok(cond: boolean, msg: string): void {
 }
 function hex(a: ArrayLike<number>): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join(" ");
+}
+/** Побайтовое равенство (для сравнения payload с пустой строкой) */
+function bytesEq(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if ((a[i] & 0xff) !== (b[i] & 0xff)) return false;
+  return true;
 }
 
 /* ------------------------------ CRC-8 ---------------------------------- */
@@ -186,13 +193,14 @@ console.log("buildCatJob");
 
 /* ------------------- Последовательность кадров (kitty-web) -------------- */
 
-console.log("buildCatFrameSequence (модель kitty-web)");
+console.log("buildCatFrameSequence (модель kitty-web + разгон сверху)");
 // Дефолты kitty-web: скорость 32, энергия 24000, прогон 100
 ok(CAT_SPEED_DEFAULT === 32, `дефолт скорости kitty-web = 32 (${CAT_SPEED_DEFAULT})`);
 ok(CAT_ENERGY_DEFAULT === 24000, `дефолт энергии kitty-web = 24000 (${CAT_ENERGY_DEFAULT})`);
 ok(CAT_EXTRA_FEED_DEFAULT === 100, `дефолт прогона kitty-web = 100 (${CAT_EXTRA_FEED_DEFAULT})`);
 ok(CAT_FLUSH_MTU === 200, `flush-буфер kitty-web = 200 Б (${CAT_FLUSH_MTU})`);
 ok(CAT_FLUSH_DELAY_MS === 20, `пауза после flush kitty-web = 20 мс (${CAT_FLUSH_DELAY_MS})`);
+ok(CAT_TOP_RUNUP === 16, `разгон сверху = 16 строк ≈ 2 мм (${CAT_TOP_RUNUP})`);
 // isCatLineBlank
 ok(isCatLineBlank(new Uint8Array(48)), "isCatLineBlank: нулевая строка пуста");
 ok(!isCatLineBlank(new Uint8Array([0, 0, 1])), "isCatLineBlank: хоть один бит — не пуста");
@@ -208,20 +216,33 @@ ok(!isCatLineBlank(new Uint8Array([0, 0, 1])), "isCatLineBlank: хоть оди�
   const bitmaps = cmds.filter((c) => c === CAT_CMD.BITMAP).length;
   const feeds = cmds.filter((c) => c === CAT_CMD.FEED).length;
   const speeds = cmds.filter((c) => c === CAT_CMD.SPEED).length;
-  ok(bitmaps === 2, `содержательные строки → 2 BITMAP (${bitmaps})`);
+  ok(bitmaps === 18, `BITMAP-кадров: 16 разгона + 2 содержательные (${bitmaps})`);
   ok(feeds === 2, `пустые строки → 2 FEED (межстрочный + хвостовой) (${feeds})`);
+  // Разгон: сразу после prepare (8 кадров) идут 16 ПУСТЫХ BITMAP-строк
+  const blankLine = new Uint8Array(CAT_BYTES_PER_LINE);
+  let runupOk = true;
+  for (let i = 0; i < CAT_TOP_RUNUP; i++) {
+    const f = seq.frames[8 + i];
+    if (!f || f[2] !== CAT_CMD.BITMAP || !bytesEq(f.subarray(6, 54), blankLine)) runupOk = false;
+  }
+  ok(runupOk, `разгон: ${CAT_TOP_RUNUP} пустых BITMAP сразу после prepare (не feed)`);
   // Первый FEED — межстрочный: 1 пустая строка перед строкой 1, после set_speed(8)
   const firstBitmapIdx = cmds.indexOf(CAT_CMD.BITMAP);
-  ok(
-    cmds[firstBitmapIdx - 3] === CAT_CMD.SPEED &&
-      cmds[firstBitmapIdx - 2] === CAT_CMD.FEED &&
-      cmds[firstBitmapIdx - 1] === CAT_CMD.SPEED,
-    "перед первым BITMAP: set_speed(8) → feed → set_speed(32) (kitty-web)"
+  const firstContentIdx = cmds.findIndex(
+    (c, i) => c === CAT_CMD.BITMAP && !bytesEq(seq.frames[i].subarray(6, 54), blankLine)
   );
-  ok(seq.frames[firstBitmapIdx - 2][6] === 1 && seq.frames[firstBitmapIdx - 2][7] === 0,
+  ok(firstContentIdx === firstBitmapIdx + CAT_TOP_RUNUP + 3,
+    `первый содержательный BITMAP после разгона и разрыва feed (${firstContentIdx} = ${firstBitmapIdx} + ${CAT_TOP_RUNUP} + 3)`);
+  ok(
+    cmds[firstContentIdx - 3] === CAT_CMD.SPEED &&
+      cmds[firstContentIdx - 2] === CAT_CMD.FEED &&
+      cmds[firstContentIdx - 1] === CAT_CMD.SPEED,
+    "перед первым содержательным BITMAP: set_speed(8) → feed → set_speed(32) (kitty-web)"
+  );
+  ok(seq.frames[firstContentIdx - 2][6] === 1 && seq.frames[firstContentIdx - 2][7] === 0,
     "межстрочный feed = 1 строка (LE 2 байта)");
   ok(speeds === 4, `set_speed в кадрах: 8+32 в разрыве и в prepare/finish (${speeds})`);
-  ok(seq.bitmapLines === 2 && seq.fedLines === 3, `счётчики: 2 BITMAP, 3 пустых в feed — 1 межстрочная + 2 хвостовые (${seq.bitmapLines}/${seq.fedLines})`);
+  ok(seq.bitmapLines === 18 && seq.fedLines === 3, `счётчики: 18 BITMAP (16 разгон + 2 контент), 3 пустых в feed — 1 межстрочная + 2 хвостовые (${seq.bitmapLines}/${seq.fedLines})`);
   // Хвостовой FEED = хвостовые пустые (2) + прогон (100) = 102
   let lf: Uint8Array | null = null;
   for (let i = seq.frames.length - 1; i >= 0; i--) {
@@ -237,20 +258,22 @@ ok(!isCatLineBlank(new Uint8Array([0, 0, 1])), "isCatLineBlank: хоть оди�
   ok(seq.frames.every((f) => f.length <= CAT_FLUSH_MTU), "все кадры ≤ flush-буфера 200 Б");
 }
 {
-  // Полностью пустое изображение: НОЛЬ BITMAP, весь прогон одним feed
+  // Полностью пустое изображение: НОЛЬ BITMAP (разгон не нужен), весь прогон одним feed
   const px = new Uint8Array(CAT_WIDTH * 3 * 4).fill(255);
   const seq = buildCatFrameSequence(px, CAT_WIDTH, 3, { extraFeed: 50 });
   const bitmaps = seq.frames.filter((f) => f[2] === CAT_CMD.BITMAP).length;
-  ok(bitmaps === 0, `пустое изображение: 0 BITMAP (${bitmaps})`);
+  ok(bitmaps === 0, `пустое изображение: 0 BITMAP, разгона нет (${bitmaps})`);
   ok(seq.bitmapLines === 0 && seq.fedLines === 3, `3 пустые строки ушли в прогон (${seq.fedLines})`);
 }
 {
-  // Без пустых строк — feed только в finish (прогон)
+  // Без пустых строк — 16 разгона + 2 контента, feed только в finish (прогон)
   const px = new Uint8Array(CAT_WIDTH * 2 * 4).fill(255);
   for (let y = 0; y < 2; y++) px.set([0, 0, 0, 255], (y * CAT_WIDTH) * 4);
   const seq = buildCatFrameSequence(px, CAT_WIDTH, 2, { extraFeed: 50 });
+  const bitmaps = seq.frames.filter((f) => f[2] === CAT_CMD.BITMAP).length;
   const feeds = seq.frames.filter((f) => f[2] === CAT_CMD.FEED);
-  ok(feeds.length === 1 && feeds[0][6] === 50, `без пустых строк — один feed прогона 50 (${feeds.length})`);
+  ok(bitmaps === CAT_TOP_RUNUP + 2, `без пустых строк: 16 разгона + 2 контента = 18 BITMAP (${bitmaps})`);
+  ok(feeds.length === 1 && feeds[0][6] === 50, `feed только прогон 50 (${feeds.length})`);
 }
 
 /* --------------------------- Состояние принтера ------------------------ */

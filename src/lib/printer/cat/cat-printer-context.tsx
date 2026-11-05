@@ -45,6 +45,7 @@ import {
   CAT_ENERGY_DEFAULT,
   CAT_EXTRA_FEED_DEFAULT,
   CAT_SPEED_DEFAULT,
+  CAT_TOP_RUNUP,
   CAT_WIDTH,
   catStateSummary,
 } from "./cat-protocol";
@@ -357,7 +358,7 @@ export function CatPrinterProvider({
           extraFeed,
         });
         log(
-          `cat: задание ${img.width}×${img.height}: ${seq.bitmapLines} строк BITMAP, ${seq.fedLines} пустых → feed, ${seq.frames.length} кадров, ${seq.totalBytes} Б (speed ${speed}, energy ${energy})`
+          `cat: задание ${img.width}×${img.height}: ${seq.bitmapLines} строк BITMAP (вкл. разгон ${CAT_TOP_RUNUP}), ${seq.fedLines} пустых → feed, ${seq.frames.length} кадров, ${seq.totalBytes} Б (speed ${speed}, energy ${energy})`
         );
         await tr.sendFrames(seq.frames, {
           flushMtu: chunkSize,
